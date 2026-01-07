@@ -1,6 +1,7 @@
 //! Screen definitions for the ralf TUI.
 
 pub mod setup;
+pub mod spec_studio;
 pub mod welcome;
 
 use crate::app::App;

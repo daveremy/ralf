@@ -5,6 +5,7 @@ use ratatui::style::{Color, Modifier, Style};
 /// Color palette for the TUI.
 pub struct Palette;
 
+#[allow(dead_code)]
 impl Palette {
     // Base colors
     pub const BG: Color = Color::Rgb(30, 30, 40);
@@ -13,7 +14,6 @@ impl Palette {
 
     // Accent colors
     pub const ACCENT: Color = Color::Rgb(130, 170, 255);
-    pub const ACCENT_DIM: Color = Color::Rgb(80, 100, 160);
 
     // Status bar colors (high contrast)
     pub const STATUS_BG: Color = Color::Rgb(45, 45, 60);
@@ -32,17 +32,18 @@ impl Palette {
 /// Status indicator symbols (with ASCII fallbacks).
 pub struct Symbols;
 
+#[allow(dead_code)]
 impl Symbols {
     pub const CHECK: &'static str = "[ok]";
     pub const WARN: &'static str = "[!]";
     pub const ERROR: &'static str = "[x]";
     pub const PENDING: &'static str = "[ ]";
-    pub const SPINNER: [&'static str; 4] = ["|", "/", "-", "\\"];
 }
 
 /// Common styles used throughout the TUI.
 pub struct Styles;
 
+#[allow(dead_code)]
 impl Styles {
     /// Default text style.
     pub fn default() -> Style {
@@ -127,6 +128,7 @@ pub fn progress_bar(progress: f32, width: usize) -> String {
 }
 
 /// Format a status indicator with the appropriate symbol.
+#[allow(dead_code)]
 pub fn status_indicator(status: Status) -> (&'static str, Style) {
     match status {
         Status::Ready => (Symbols::CHECK, Styles::success()),
@@ -138,6 +140,7 @@ pub fn status_indicator(status: Status) -> (&'static str, Style) {
 
 /// Status types for indicators.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum Status {
     Ready,
     Warning,

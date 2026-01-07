@@ -1,7 +1,11 @@
 //! Application state and update logic for the ralf TUI.
 
 use crate::event::Action;
-use ralf_engine::{discover_models, get_git_info, Config, GitInfo, ModelConfig, ModelInfo, ProbeResult};
+use crate::ui::widgets::TextInputState;
+use ralf_engine::{
+    discover_models, draft_has_promise, get_git_info, save_draft_snapshot, ChatMessage, Config,
+    GitInfo, ModelConfig, ModelInfo, ProbeResult, Thread,
+};
 use std::path::PathBuf;
 
 /// The current screen being displayed.
@@ -10,6 +14,9 @@ pub enum Screen {
     #[default]
     Welcome,
     Setup,
+    SpecStudio,
+    FinalizeConfirm,
+    FinalizeError,
 }
 
 /// Model status after probing.
@@ -67,6 +74,25 @@ pub struct App {
 
     /// Ticks remaining until notification is cleared.
     notification_ttl: usize,
+
+    // === Spec Studio state ===
+    /// Current conversation thread.
+    pub thread: Thread,
+
+    /// Text input state for the chat input.
+    pub input_state: TextInputState,
+
+    /// Index of the currently selected model for chat.
+    pub chat_model_index: usize,
+
+    /// Whether a chat request is in progress.
+    pub chat_in_progress: bool,
+
+    /// Scroll offset for the transcript pane.
+    pub transcript_scroll: usize,
+
+    /// Scroll offset for the draft pane.
+    pub draft_scroll: usize,
 }
 
 impl App {
@@ -92,10 +118,17 @@ impl App {
             })
             .collect();
 
+        // Start on Setup if no config exists, otherwise Welcome
+        let initial_screen = if config_exists {
+            Screen::Welcome
+        } else {
+            Screen::Setup
+        };
+
         Self {
             should_quit: false,
             show_help: false,
-            screen: Screen::Welcome,
+            screen: initial_screen,
             repo_path,
             git_info,
             config_exists,
@@ -107,6 +140,13 @@ impl App {
             promise_tag: "COMPLETE".to_string(),
             notification: None,
             notification_ttl: 0,
+            // Spec Studio state
+            thread: Thread::new(),
+            input_state: TextInputState::new(),
+            chat_model_index: 0,
+            chat_in_progress: false,
+            transcript_scroll: 0,
+            draft_scroll: 0,
         }
     }
 
@@ -118,6 +158,11 @@ impl App {
                 if self.show_help {
                     self.show_help = false;
                 } else {
+                    // Save thread if we're in SpecStudio before quitting
+                    if self.screen == Screen::SpecStudio {
+                        let spec_dir = self.repo_path.join(".ralf").join("spec");
+                        let _ = self.thread.save(&spec_dir);
+                    }
                     self.should_quit = true;
                 }
                 return;
@@ -139,13 +184,25 @@ impl App {
         match self.screen {
             Screen::Welcome => self.handle_welcome_action(action),
             Screen::Setup => self.handle_setup_action(action),
+            Screen::SpecStudio => self.handle_spec_studio_action(action),
+            Screen::FinalizeConfirm => self.handle_finalize_confirm_action(action),
+            Screen::FinalizeError => self.handle_finalize_error_action(action),
         }
     }
 
     fn handle_welcome_action(&mut self, action: Action) {
-        if action == Action::Setup {
-            self.screen = Screen::Setup;
-            self.start_probing();
+        match action {
+            Action::Setup => {
+                self.screen = Screen::Setup;
+                self.start_probing();
+            }
+            Action::Chat => {
+                // Only allow chat if config exists
+                if self.config_exists {
+                    self.screen = Screen::SpecStudio;
+                }
+            }
+            _ => {}
         }
     }
 
@@ -274,6 +331,8 @@ impl App {
                 self.config_exists = true;
                 self.config = Some(config);
                 self.set_notification("Config saved successfully".to_string());
+                // Transition to Welcome screen after successful save
+                self.screen = Screen::Welcome;
             }
             Err(e) => {
                 self.set_notification(format!("Failed to save config: {e}"));
@@ -297,6 +356,180 @@ impl App {
             self.notification_ttl -= 1;
             if self.notification_ttl == 0 {
                 self.notification = None;
+            }
+        }
+    }
+
+    // === Spec Studio handlers ===
+
+    fn handle_spec_studio_action(&mut self, action: Action) {
+        match action {
+            Action::Back => {
+                // Save thread before leaving
+                let spec_dir = self.repo_path.join(".ralf").join("spec");
+                let _ = self.thread.save(&spec_dir);
+                self.screen = Screen::Welcome;
+            }
+            Action::Finalize => {
+                self.try_finalize();
+            }
+            Action::Export => {
+                self.export_transcript();
+            }
+            Action::NextTab => {
+                // Cycle through available models
+                if !self.models.is_empty() {
+                    self.chat_model_index = (self.chat_model_index + 1) % self.models.len();
+                }
+            }
+            Action::Up => {
+                // Scroll transcript up
+                if self.transcript_scroll > 0 {
+                    self.transcript_scroll -= 1;
+                }
+            }
+            Action::Down => {
+                // Scroll transcript down
+                self.transcript_scroll += 1;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_finalize_confirm_action(&mut self, action: Action) {
+        match action {
+            Action::Select => {
+                // Confirm finalize - write PROMPT.md
+                self.do_finalize();
+            }
+            Action::Back => {
+                self.screen = Screen::SpecStudio;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_finalize_error_action(&mut self, action: Action) {
+        // Any key returns to spec studio
+        if action == Action::Select || action == Action::Back {
+            self.screen = Screen::SpecStudio;
+        }
+    }
+
+    /// Attempt to finalize the specification.
+    fn try_finalize(&mut self) {
+        if draft_has_promise(&self.thread.draft) {
+            self.screen = Screen::FinalizeConfirm;
+        } else {
+            self.screen = Screen::FinalizeError;
+        }
+    }
+
+    /// Actually write the PROMPT.md file.
+    fn do_finalize(&mut self) {
+        let prompt_path = self.repo_path.join("PROMPT.md");
+        match std::fs::write(&prompt_path, &self.thread.draft) {
+            Ok(()) => {
+                // Save final draft snapshot
+                let spec_dir = self.repo_path.join(".ralf").join("spec");
+                let _ = save_draft_snapshot(&spec_dir, &self.thread.draft);
+                let _ = self.thread.save(&spec_dir);
+
+                self.set_notification("PROMPT.md saved successfully".to_string());
+                self.screen = Screen::Welcome;
+            }
+            Err(e) => {
+                self.set_notification(format!("Failed to save PROMPT.md: {e}"));
+                self.screen = Screen::SpecStudio;
+            }
+        }
+    }
+
+    /// Add a user message to the current thread.
+    pub fn add_user_message(&mut self, content: String) {
+        self.thread.add_message(ChatMessage::user(content));
+        // Auto-scroll to show new message
+        self.scroll_transcript_to_bottom();
+    }
+
+    /// Add an assistant message to the current thread.
+    pub fn add_assistant_message(&mut self, content: String, model: String) {
+        // Auto-update draft if response contains a promise tag or looks like a spec
+        // This allows the model to "propose" a draft that the user can then finalize
+        if draft_has_promise(&content) || content.starts_with('#') {
+            self.thread.draft = content.clone();
+        }
+
+        self.thread.add_message(ChatMessage::assistant(content, model));
+        // Auto-save thread after each response
+        let spec_dir = self.repo_path.join(".ralf").join("spec");
+        let _ = self.thread.save(&spec_dir);
+        // Auto-scroll to show new message
+        self.scroll_transcript_to_bottom();
+    }
+
+    /// Scroll transcript to show the latest messages.
+    fn scroll_transcript_to_bottom(&mut self) {
+        // Estimate lines needed (rough: 3 lines per message on average)
+        let estimated_lines = self.thread.messages.len() * 3;
+        // Set scroll to a high value; rendering will clamp it appropriately
+        self.transcript_scroll = estimated_lines.saturating_sub(10);
+    }
+
+    /// Update the draft content.
+    pub fn update_draft(&mut self, draft: String) {
+        self.thread.draft = draft;
+    }
+
+    /// Get the currently selected model for chat.
+    pub fn current_chat_model(&self) -> Option<&ModelStatus> {
+        self.models.get(self.chat_model_index)
+    }
+
+    /// Get enabled models for chat.
+    pub fn enabled_models(&self) -> Vec<&ModelStatus> {
+        self.models.iter().filter(|m| m.enabled).collect()
+    }
+
+    /// Export transcript to a markdown file.
+    fn export_transcript(&mut self) {
+        use ralf_engine::Role;
+
+        let mut content = String::new();
+        content.push_str("# Spec Studio Transcript\n\n");
+        content.push_str(&format!("Thread: {}\n", self.thread.title));
+        content.push_str(&format!("Thread ID: {}\n\n", self.thread.id));
+        content.push_str("---\n\n");
+
+        for msg in &self.thread.messages {
+            let role = match msg.role {
+                Role::User => "**You**",
+                Role::Assistant => {
+                    if let Some(model) = &msg.model {
+                        model.as_str()
+                    } else {
+                        "**Assistant**"
+                    }
+                }
+                Role::System => "**System**",
+            };
+            content.push_str(&format!("### {}\n\n", role));
+            content.push_str(&msg.content);
+            content.push_str("\n\n");
+        }
+
+        if !self.thread.draft.is_empty() {
+            content.push_str("---\n\n## Current Draft\n\n");
+            content.push_str(&self.thread.draft);
+        }
+
+        let export_path = self.repo_path.join(".ralf").join("spec").join("transcript-export.md");
+        match std::fs::write(&export_path, &content) {
+            Ok(()) => {
+                self.set_notification(format!("Exported to {}", export_path.display()));
+            }
+            Err(e) => {
+                self.set_notification(format!("Export failed: {e}"));
             }
         }
     }

@@ -1,4 +1,5 @@
 //! Tab bar widget.
+#![allow(dead_code)]
 
 use crate::ui::theme::Styles;
 use ratatui::{

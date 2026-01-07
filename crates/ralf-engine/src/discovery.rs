@@ -205,24 +205,28 @@ fn run_probe_command(name: &str, timeout: Duration) -> Result<ProbeOutput, std::
     use std::io::{Read, Write};
     use std::process::{Command, Stdio};
 
+    let probe_prompt = "Say 'ok' and nothing else.";
+
     // Build command based on model
-    let mut cmd = match name {
+    // Some CLIs take prompt via stdin, others via -p argument
+    let (mut cmd, uses_stdin) = match name {
         "claude" => {
             let mut c = Command::new("claude");
             c.args(["-p", "--output-format", "text"]);
-            c
+            (c, true)
         }
         "codex" => {
             let mut c = Command::new("codex");
             c.args(["exec", "-"]);
-            c
+            (c, true)
         }
         "gemini" => {
+            // Gemini CLI takes prompt as argument to -p, not via stdin
             let mut c = Command::new("gemini");
-            c.arg("-p");
-            c
+            c.args(["-p", probe_prompt]);
+            (c, false)
         }
-        _ => Command::new(name),
+        _ => (Command::new(name), true),
     };
 
     cmd.stdin(Stdio::piped())
@@ -231,9 +235,12 @@ fn run_probe_command(name: &str, timeout: Duration) -> Result<ProbeOutput, std::
 
     let mut child = cmd.spawn()?;
 
-    // Send a simple prompt
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = stdin.write_all(b"Say 'ok' and nothing else.\n");
+    // Send prompt via stdin if needed
+    if uses_stdin {
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(probe_prompt.as_bytes());
+            let _ = stdin.write_all(b"\n");
+        }
     }
 
     // Wait with timeout

@@ -2,7 +2,7 @@
 
 use crate::app::App;
 use crate::screens::Screen;
-use crate::ui::theme::{status_indicator, Status, Styles};
+use crate::ui::theme::Styles;
 use crate::ui::widgets::{KeyHint, StatusBar};
 use crate::ui::{centered_rect, main_layout};
 use ratatui::{
@@ -23,12 +23,18 @@ impl Screen for WelcomeScreen {
         render_welcome_content(app, main_area, buf);
 
         // Render status bar
-        let hints = vec![
-            KeyHint::new("s", "Setup"),
-            KeyHint::new("?", "Help"),
-            KeyHint::new("q", "Quit"),
-        ];
-        StatusBar::new("Welcome").hints(hints).render(status_area, buf);
+        let mut hints = vec![KeyHint::new("s", "Setup")];
+        if app.config_exists {
+            hints.push(KeyHint::new("c", "Chat"));
+        }
+        hints.push(KeyHint::new("?", "Help"));
+        hints.push(KeyHint::new("q", "Quit"));
+
+        let mut status_bar = StatusBar::new("Welcome").hints(hints);
+        if let Some(notification) = &app.notification {
+            status_bar = status_bar.right(notification);
+        }
+        status_bar.render(status_area, buf);
     }
 }
 
@@ -91,28 +97,39 @@ fn render_welcome_content(app: &App, area: Rect, buf: &mut Buffer) {
 
     lines.push(Line::from(""));
 
-    // Model detection summary
+    // Model summary - show configured models from config, not probed status
     lines.push(Line::from(Span::styled("  Models:", Styles::dim())));
 
-    if app.models.is_empty() {
+    if let Some(config) = &app.config {
+        // Show models from config
+        if config.model_priority.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "    No models configured",
+                Styles::warning(),
+            )));
+        } else {
+            for model_name in &config.model_priority {
+                lines.push(Line::from(vec![
+                    Span::raw("    "),
+                    Span::styled(model_name, Styles::default()),
+                    Span::raw(" "),
+                    Span::styled("[ok] configured", Styles::success()),
+                ]));
+            }
+        }
+    } else if app.models.is_empty() {
         lines.push(Line::from(Span::styled(
             "    No models detected",
             Styles::warning(),
         )));
     } else {
+        // No config yet - show detected models
         for model in &app.models {
-            let status = match &model.probe_result {
-                Some(result) if result.success => Status::Ready,
-                Some(_) => Status::Warning,
-                None => Status::Pending,
-            };
-            let (indicator, style) = status_indicator(status);
-
             lines.push(Line::from(vec![
                 Span::raw("    "),
                 Span::styled(&model.info.name, Styles::default()),
                 Span::raw(" "),
-                Span::styled(indicator, style),
+                Span::styled("[!] not configured", Styles::warning()),
             ]));
         }
     }
@@ -121,13 +138,23 @@ fn render_welcome_content(app: &App, area: Rect, buf: &mut Buffer) {
     lines.push(Line::from(""));
 
     // Instructions
-    lines.push(Line::from(vec![
-        Span::styled("  Press ", Styles::dim()),
-        Span::styled("[s]", Styles::key_hint()),
-        Span::styled(" to run setup, or ", Styles::dim()),
-        Span::styled("[q]", Styles::key_hint()),
-        Span::styled(" to quit", Styles::dim()),
-    ]));
+    if app.config_exists {
+        lines.push(Line::from(vec![
+            Span::styled("  Press ", Styles::dim()),
+            Span::styled("[c]", Styles::key_hint()),
+            Span::styled(" for Spec Studio, ", Styles::dim()),
+            Span::styled("[s]", Styles::key_hint()),
+            Span::styled(" for setup", Styles::dim()),
+        ]));
+    } else {
+        lines.push(Line::from(vec![
+            Span::styled("  Press ", Styles::dim()),
+            Span::styled("[s]", Styles::key_hint()),
+            Span::styled(" to run setup, or ", Styles::dim()),
+            Span::styled("[q]", Styles::key_hint()),
+            Span::styled(" to quit", Styles::dim()),
+        ]));
+    }
 
     let paragraph = Paragraph::new(lines).style(Styles::default());
     paragraph.render(inner, buf);

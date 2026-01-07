@@ -22,7 +22,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
-use std::io::{self, stdout, Write};
+use std::io::{self, stdout};
 use std::path::Path;
 
 /// RAII guard for terminal state restoration.
@@ -52,6 +52,11 @@ pub async fn run_tui(repo_path: &Path) -> Result<(), Box<dyn std::error::Error>>
     // Create app
     let mut app = App::new(repo_path.to_path_buf());
 
+    // Start probing if we're on Setup screen (first-time user)
+    if app.screen == Screen::Setup {
+        app.start_probing();
+    }
+
     // Create event handler (4 Hz tick rate = 250ms)
     let mut events = EventHandler::new(250);
 
@@ -73,6 +78,11 @@ async fn run_loop(
     let mut probe_handles: Vec<tokio::task::JoinHandle<(String, ralf_engine::ProbeResult)>> =
         Vec::new();
 
+    // Chat task handles
+    let mut chat_handles: Vec<
+        tokio::task::JoinHandle<Result<ralf_engine::ChatResult, ralf_engine::RunnerError>>,
+    > = Vec::new();
+
     loop {
         // Draw
         terminal.draw(|frame| {
@@ -86,6 +96,15 @@ async fn run_loop(
                 }
                 app::Screen::Setup => {
                     screens::setup::SetupScreen.render(app, area, buf);
+                }
+                app::Screen::SpecStudio => {
+                    screens::spec_studio::SpecStudioScreen.render(app, area, buf);
+                }
+                app::Screen::FinalizeConfirm => {
+                    screens::spec_studio::FinalizeConfirmScreen.render(app, area, buf);
+                }
+                app::Screen::FinalizeError => {
+                    screens::spec_studio::FinalizeErrorScreen.render(app, area, buf);
                 }
             }
 
@@ -130,6 +149,12 @@ async fn run_loop(
         if let Some(event) = events.next().await {
             match event {
                 Event::Key(key) => {
+                    // Special handling for SpecStudio text input
+                    if app.screen == app::Screen::SpecStudio && !app.chat_in_progress {
+                        if handle_spec_studio_key(app, key, &mut chat_handles).await {
+                            continue; // Key was handled by text input
+                        }
+                    }
                     let action = event::key_to_action(key);
                     app.handle_action(action);
                 }
@@ -142,9 +167,33 @@ async fn run_loop(
             }
         }
 
+        // Check for completed chat requests
+        let mut completed_chats = Vec::new();
+        for (i, handle) in chat_handles.iter().enumerate() {
+            if handle.is_finished() {
+                completed_chats.push(i);
+            }
+        }
+        for i in completed_chats.into_iter().rev() {
+            if let Ok(result) = chat_handles.remove(i).await {
+                match result {
+                    Ok(chat_result) => {
+                        app.add_assistant_message(chat_result.content, chat_result.model);
+                    }
+                    Err(e) => {
+                        app.add_assistant_message(format!("Error: {e}"), "error".to_string());
+                    }
+                }
+                app.chat_in_progress = false;
+            }
+        }
+
         if app.should_quit {
-            // Abort any remaining probe tasks
+            // Abort any remaining tasks
             for handle in probe_handles {
+                handle.abort();
+            }
+            for handle in chat_handles {
                 handle.abort();
             }
             break;
@@ -152,6 +201,100 @@ async fn run_loop(
     }
 
     Ok(())
+}
+
+/// Handle key input for SpecStudio text input.
+/// Returns true if the key was handled (should not be processed as action).
+async fn handle_spec_studio_key(
+    app: &mut App,
+    key: crossterm::event::KeyEvent,
+    chat_handles: &mut Vec<
+        tokio::task::JoinHandle<Result<ralf_engine::ChatResult, ralf_engine::RunnerError>>,
+    >,
+) -> bool {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    // Don't handle if control key is pressed (except for certain keys)
+    if key.modifiers.contains(KeyModifiers::CONTROL) {
+        return false; // Let action handler deal with Ctrl+C, Ctrl+F, etc.
+    }
+
+    match key.code {
+        // Special keys that should be handled as actions
+        KeyCode::Esc | KeyCode::Tab => false,
+
+        // Enter sends the message
+        KeyCode::Enter => {
+            if !app.input_state.is_empty() {
+                let content = app.input_state.submit();
+                app.add_user_message(content);
+
+                // Start chat request
+                if let Some(model_status) = app.current_chat_model() {
+                    let model_config = ralf_engine::ModelConfig::default_for(&model_status.info.name);
+                    let context = app.thread.to_context();
+
+                    app.chat_in_progress = true;
+
+                    // Use tokio::spawn for async function (not spawn_blocking)
+                    let handle = tokio::spawn(async move {
+                        ralf_engine::invoke_chat(&model_config, &context, 300).await
+                    });
+                    chat_handles.push(handle);
+                }
+            }
+            true
+        }
+
+        // Text input
+        KeyCode::Char(c) => {
+            app.input_state.insert(c);
+            true
+        }
+        KeyCode::Backspace => {
+            app.input_state.backspace();
+            true
+        }
+        KeyCode::Delete => {
+            app.input_state.delete();
+            true
+        }
+        KeyCode::Left => {
+            app.input_state.move_left();
+            true
+        }
+        KeyCode::Right => {
+            app.input_state.move_right();
+            true
+        }
+        KeyCode::Home => {
+            app.input_state.move_home();
+            true
+        }
+        KeyCode::End => {
+            app.input_state.move_end();
+            true
+        }
+        KeyCode::Up => {
+            // History navigation when input is empty
+            if app.input_state.is_empty() {
+                app.input_state.history_prev();
+                true
+            } else {
+                false // Let action handler scroll transcript
+            }
+        }
+        KeyCode::Down => {
+            if app.input_state.is_empty() {
+                app.input_state.history_next();
+                true
+            } else {
+                false
+            }
+        }
+
+        _ => false,
+    }
 }
 
 /// Get the TUI version.

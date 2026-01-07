@@ -38,16 +38,3 @@ pub fn main_layout(area: Rect) -> (Rect, Rect) {
         .split(area);
     (chunks[0], chunks[1])
 }
-
-/// Create a layout with title, content, and footer.
-pub fn content_layout(area: Rect) -> (Rect, Rect, Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3), // Title
-            Constraint::Min(3),    // Content
-            Constraint::Length(3), // Footer
-        ])
-        .split(area);
-    (chunks[0], chunks[1], chunks[2])
-}

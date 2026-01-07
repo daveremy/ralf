@@ -6,8 +6,10 @@
 //! - Rate-limit detection and cooldown management
 //! - Verification runners
 //! - Changelog generation
+//! - Chat/conversation management for Spec Studio
 
 pub mod changelog;
+pub mod chat;
 pub mod config;
 pub mod discovery;
 pub mod runner;
@@ -15,6 +17,10 @@ pub mod state;
 
 // Re-export commonly used types
 pub use changelog::{write_changelog_entry, ChangelogEntry, ChangelogError, IterationStatus};
+pub use chat::{
+    draft_has_promise, extract_draft_promise, invoke_chat, save_draft_snapshot, ChatContext,
+    ChatError, ChatMessage, ChatResult, Role, Thread,
+};
 pub use config::{Config, ConfigError, ModelConfig, ModelSelection, VerifierConfig};
 pub use discovery::{discover_model, discover_models, probe_model, DiscoveryResult, ModelInfo, ProbeResult};
 pub use runner::{

@@ -50,17 +50,62 @@ fn render_setup_content(app: &App, area: Rect, buf: &mut Buffer) {
     let inner = block.inner(content_area);
     block.render(content_area, buf);
 
-    // Split into sections
+    // Adjust layout based on whether we need intro text
+    let is_first_time = !app.config_exists;
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(2),  // Header
-            Constraint::Min(6),     // Model list
-            Constraint::Length(1),  // Separator
-            Constraint::Length(4),  // Options
-            Constraint::Length(2),  // Footer
-        ])
+        .constraints(if is_first_time {
+            vec![
+                Constraint::Length(5),  // Intro text
+                Constraint::Length(2),  // Header
+                Constraint::Min(6),     // Model list
+                Constraint::Length(1),  // Separator
+                Constraint::Length(4),  // Options
+                Constraint::Length(2),  // Footer
+            ]
+        } else {
+            vec![
+                Constraint::Length(0),  // No intro
+                Constraint::Length(2),  // Header
+                Constraint::Min(6),     // Model list
+                Constraint::Length(1),  // Separator
+                Constraint::Length(4),  // Options
+                Constraint::Length(2),  // Footer
+            ]
+        })
         .split(inner);
+
+    // Intro text for first-time users
+    if is_first_time {
+        let intro = if app.is_probing() {
+            // Still probing
+            vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "  Welcome to ralf! Let's configure your models.",
+                    Styles::highlight(),
+                )),
+                Line::from(Span::styled(
+                    "  Probing each model CLI to check availability...",
+                    Styles::dim(),
+                )),
+            ]
+        } else {
+            // Probing complete - show instructions
+            vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    "  Probing complete! Use Up/Down to select, [d] to disable.",
+                    Styles::highlight(),
+                )),
+                Line::from(Span::styled(
+                    "  Press [Enter] to save your configuration.",
+                    Styles::dim(),
+                )),
+            ]
+        };
+        Paragraph::new(intro).render(chunks[0], buf);
+    }
 
     // Header
     let header = if app.is_probing() {
@@ -69,20 +114,20 @@ fn render_setup_content(app: &App, area: Rect, buf: &mut Buffer) {
         Line::from(Span::styled("  Model status:", Styles::dim()))
     };
     Paragraph::new(vec![Line::from(""), header])
-        .render(chunks[0], buf);
+        .render(chunks[1], buf);
 
     // Model list
-    render_model_list(app, chunks[1], buf);
+    render_model_list(app, chunks[2], buf);
 
     // Separator
     let sep = Line::from(Span::styled(
-        "  ".to_owned() + &"─".repeat((chunks[2].width as usize).saturating_sub(4)),
+        "  ".to_owned() + &"─".repeat((chunks[3].width as usize).saturating_sub(4)),
         Styles::dim(),
     ));
-    Paragraph::new(vec![sep]).render(chunks[2], buf);
+    Paragraph::new(vec![sep]).render(chunks[3], buf);
 
     // Options
-    render_options(app, chunks[3], buf);
+    render_options(app, chunks[4], buf);
 
     // Footer hint
     let footer = Line::from(vec![
@@ -94,7 +139,7 @@ fn render_setup_content(app: &App, area: Rect, buf: &mut Buffer) {
         Span::styled("[r]", Styles::key_hint()),
         Span::styled(" Retry probe", Styles::dim()),
     ]);
-    Paragraph::new(vec![footer]).render(chunks[4], buf);
+    Paragraph::new(vec![footer]).render(chunks[5], buf);
 }
 
 #[allow(clippy::cast_precision_loss)]

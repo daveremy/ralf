@@ -1,4 +1,5 @@
 //! Log viewer widget with scrolling.
+#![allow(dead_code)]
 
 use crate::ui::theme::Styles;
 use ratatui::{

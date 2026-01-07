@@ -103,6 +103,13 @@ DoD:
 - User can author a multi-turn spec dialog and produce a valid `PROMPT.md` without leaving the TUI.
 - Validation blocks finalize if `<promise>…</promise>` is missing.
 
+#### Future Enhancements (Spec Studio)
+- **Thread history/resume**: Welcome screen shows list of threads (like Claude's conversation history). User can resume in-progress specs or start new ones.
+- **Skip Welcome for active work**: If config exists and a thread is in progress, go directly to Spec Studio.
+- **Mouse selection**: Enable mouse support for selecting/copying transcript text.
+- **Export transcript**: Keybinding to export full transcript to file for external use.
+- **Archive/delete threads**: Manage old threads from Welcome screen.
+
 ### Milestone 4 — Loop Runner dashboard MVP
 
 Deliverables:

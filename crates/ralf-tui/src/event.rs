@@ -69,6 +69,9 @@ pub enum Action {
     Quit,
     Help,
     Setup,
+    Chat,
+    Finalize,
+    Export,
     Back,
     Select,
     Up,
@@ -90,10 +93,21 @@ pub fn key_to_action(key: KeyEvent) -> Action {
         return Action::Quit;
     }
 
+    // Ctrl+F for finalize
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('f') {
+        return Action::Finalize;
+    }
+
+    // Ctrl+E for export transcript
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('e') {
+        return Action::Export;
+    }
+
     match key.code {
         KeyCode::Char('q') => Action::Quit,
         KeyCode::Char('?') => Action::Help,
         KeyCode::Char('s') => Action::Setup,
+        KeyCode::Char('c') => Action::Chat,
         KeyCode::Char('r') => Action::Retry,
         KeyCode::Char('d') => Action::Disable,
         KeyCode::Esc => Action::Back,
