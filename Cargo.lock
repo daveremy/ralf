@@ -647,6 +647,7 @@ dependencies = [
  "crossterm",
  "ralf-engine",
  "ratatui",
+ "tokio",
 ]
 
 [[package]]

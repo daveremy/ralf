@@ -1,26 +1,162 @@
 //! ralf-tui: Terminal UI for multi-model autonomous loops
 //!
 //! This crate provides the TUI layer for ralf, including:
-//! - Spec Studio screens for spec drafting
-//! - Run Dashboard for loop monitoring
+//! - Welcome screen with model detection
+//! - Setup screen for configuration
 //! - Shared widgets (tabs, log viewers)
 
-// Re-export engine for convenience
+mod app;
+mod event;
+mod screens;
+mod ui;
+
+use screens::Screen as ScreenTrait;
+
+pub use app::{App, Screen};
+pub use event::{Action, Event, EventHandler};
 pub use ralf_engine;
 
-/// Placeholder function to verify the crate builds correctly.
-///
-/// This will be replaced with actual TUI implementation.
-pub fn tui_version() -> &'static str {
-    env!("CARGO_PKG_VERSION")
+use crossterm::{
+    cursor::Show as ShowCursor,
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use ratatui::{backend::CrosstermBackend, Terminal};
+use std::io::{self, stdout, Write};
+use std::path::Path;
+
+/// RAII guard for terminal state restoration.
+struct TerminalGuard;
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        let _ = disable_raw_mode();
+        let _ = execute!(stdout(), LeaveAlternateScreen, ShowCursor);
+    }
 }
 
-/// Placeholder for running the TUI.
+/// Run the TUI application.
 ///
-/// This will be replaced with actual TUI implementation.
-pub fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
-    println!("TUI not yet implemented");
+/// This is the main entry point for the TUI. It sets up the terminal,
+/// runs the event loop, and restores the terminal on exit.
+pub async fn run_tui(repo_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    // Setup terminal with RAII guard for cleanup
+    enable_raw_mode()?;
+    let _guard = TerminalGuard;
+
+    let mut stdout = stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    // Create app
+    let mut app = App::new(repo_path.to_path_buf());
+
+    // Create event handler (4 Hz tick rate = 250ms)
+    let mut events = EventHandler::new(250);
+
+    // Main loop
+    let result = run_loop(&mut terminal, &mut app, &mut events).await;
+
+    // Restore cursor before guard drops
+    terminal.show_cursor()?;
+
+    result
+}
+
+async fn run_loop(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+    events: &mut EventHandler,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Probe task handles
+    let mut probe_handles: Vec<tokio::task::JoinHandle<(String, ralf_engine::ProbeResult)>> =
+        Vec::new();
+
+    loop {
+        // Draw
+        terminal.draw(|frame| {
+            let area = frame.area();
+            let buf = frame.buffer_mut();
+
+            // Render current screen
+            match app.screen {
+                app::Screen::Welcome => {
+                    screens::welcome::WelcomeScreen.render(app, area, buf);
+                }
+                app::Screen::Setup => {
+                    screens::setup::SetupScreen.render(app, area, buf);
+                }
+            }
+
+            // Render help overlay if visible
+            if app.show_help {
+                screens::render_help_overlay(area, buf);
+            }
+        })?;
+
+        // Check for completed probes (non-blocking)
+        let mut completed = Vec::new();
+        for (i, handle) in probe_handles.iter().enumerate() {
+            if handle.is_finished() {
+                completed.push(i);
+            }
+        }
+        for i in completed.into_iter().rev() {
+            if let Ok((name, result)) = probe_handles.remove(i).await {
+                app.update_probe_result(&name, result);
+            }
+        }
+
+        // Start new probes if needed (only on Setup screen)
+        if app.screen == app::Screen::Setup {
+            let models_to_probe = app.models_to_probe();
+            for name in models_to_probe {
+                // Mark as in-flight to prevent duplicate spawning
+                app.mark_probe_started(&name);
+
+                let name_clone = name.clone();
+                // Use spawn_blocking since probe_model does blocking I/O
+                let handle = tokio::task::spawn_blocking(move || {
+                    let timeout = std::time::Duration::from_secs(10);
+                    let result = ralf_engine::probe_model(&name_clone, timeout);
+                    (name_clone, result)
+                });
+                probe_handles.push(handle);
+            }
+        }
+
+        // Handle events
+        if let Some(event) = events.next().await {
+            match event {
+                Event::Key(key) => {
+                    let action = event::key_to_action(key);
+                    app.handle_action(action);
+                }
+                Event::Tick => {
+                    app.tick();
+                }
+                Event::Resize(_, _) => {
+                    // Terminal will handle resize automatically
+                }
+            }
+        }
+
+        if app.should_quit {
+            // Abort any remaining probe tasks
+            for handle in probe_handles {
+                handle.abort();
+            }
+            break;
+        }
+    }
+
     Ok(())
+}
+
+/// Get the TUI version.
+pub fn tui_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
 }
 
 #[cfg(test)]
