@@ -1,0 +1,45 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/ralf-engine",
+    "crates/ralf-tui",
+    "crates/ralf-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/dremy/ralf"
+authors = ["ralf contributors"]
+
+[workspace.dependencies]
+# Engine dependencies
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+tokio = { version = "1.0", features = ["rt-multi-thread", "macros"] }
+
+# TUI dependencies
+ratatui = "0.29"
+crossterm = "0.28"
+
+# CLI dependencies
+clap = { version = "4.0", features = ["derive"] }
+
+# Internal crates
+ralf-engine = { path = "crates/ralf-engine" }
+ralf-tui = { path = "crates/ralf-tui" }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Allow some pedantic lints that are too noisy
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"

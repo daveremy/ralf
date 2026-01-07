@@ -1,0 +1,21 @@
+[package]
+name = "ralf-cli"
+description = "CLI for ralf multi-modal autonomous loop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+publish = false
+
+[[bin]]
+name = "ralf"
+path = "src/main.rs"
+
+[dependencies]
+ralf-engine.workspace = true
+ralf-tui.workspace = true
+clap.workspace = true
+
+[lints]
+workspace = true
