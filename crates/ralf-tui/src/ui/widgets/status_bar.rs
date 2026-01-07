@@ -63,9 +63,7 @@ impl Widget for StatusBar<'_> {
 
         // Fill background with status bar color
         for x in area.x..area.x.saturating_add(area.width) {
-            buf[(x, area.y)]
-                .set_char(' ')
-                .set_bg(Palette::STATUS_BG);
+            buf[(x, area.y)].set_char(' ').set_bg(Palette::STATUS_BG);
         }
 
         // Build left side: mode + hints
@@ -81,7 +79,10 @@ impl Widget for StatusBar<'_> {
         // Key hints with high contrast
         for hint in &self.hints {
             spans.push(Span::styled(format!(" {} ", hint.key), Styles::key_hint()));
-            spans.push(Span::styled(format!(" {} ", hint.label), Styles::key_label()));
+            spans.push(Span::styled(
+                format!(" {} ", hint.label),
+                Styles::key_label(),
+            ));
         }
 
         let left_line = Line::from(spans);

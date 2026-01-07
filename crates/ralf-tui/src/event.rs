@@ -70,6 +70,8 @@ pub enum Action {
     Help,
     Setup,
     Chat,
+    Run,
+    Cancel,
     Finalize,
     Export,
     Back,
@@ -83,6 +85,7 @@ pub enum Action {
     Tab(usize),
     Retry,
     Disable,
+    ToggleFollow,
     None,
 }
 
@@ -108,8 +111,9 @@ pub fn key_to_action(key: KeyEvent) -> Action {
         KeyCode::Char('?') => Action::Help,
         KeyCode::Char('s') => Action::Setup,
         KeyCode::Char('c') => Action::Chat,
-        KeyCode::Char('r') => Action::Retry,
+        KeyCode::Char('r') => Action::Run, // Also used as Retry in Setup context
         KeyCode::Char('d') => Action::Disable,
+        KeyCode::Char('f') => Action::ToggleFollow, // Toggle output follow mode
         KeyCode::Esc => Action::Back,
         KeyCode::Enter => Action::Select,
         KeyCode::Up | KeyCode::Char('k') => Action::Up,

@@ -2,9 +2,9 @@
 
 use crate::app::App;
 use crate::screens::Screen;
+use crate::ui::main_layout;
 use crate::ui::theme::Styles;
 use crate::ui::widgets::{KeyHint, StatusBar};
-use crate::ui::main_layout;
 use ralf_engine::Role;
 use ratatui::{
     buffer::Buffer,
@@ -133,21 +133,24 @@ fn render_transcript(app: &App, area: Rect, buf: &mut Buffer) {
         }
         // Add remaining lines with indent
         for line in content_lines.iter().skip(1) {
-            lines.push(Line::from(Span::styled(format!("  {line}"), Styles::default())));
+            lines.push(Line::from(Span::styled(
+                format!("  {line}"),
+                Styles::default(),
+            )));
         }
         lines.push(Line::from("")); // Blank line between messages
     }
 
     // Show loading indicator if chat in progress
     if app.chat_in_progress {
-        lines.push(Line::from(Span::styled("  Waiting for response...", Styles::dim())));
+        lines.push(Line::from(Span::styled(
+            "  Waiting for response...",
+            Styles::dim(),
+        )));
     }
 
     // Apply scroll offset
-    let visible_lines: Vec<Line<'_>> = lines
-        .into_iter()
-        .skip(app.transcript_scroll)
-        .collect();
+    let visible_lines: Vec<Line<'_>> = lines.into_iter().skip(app.transcript_scroll).collect();
 
     let paragraph = Paragraph::new(visible_lines)
         .style(Styles::default())
@@ -171,23 +174,14 @@ fn render_draft(app: &App, area: Rect, buf: &mut Buffer) {
             Line::from(""),
             Line::from(Span::styled("  No draft yet.", Styles::dim())),
             Line::from(""),
-            Line::from(Span::styled(
-                "  When the assistant produces",
-                Styles::dim(),
-            )),
+            Line::from(Span::styled("  When the assistant produces", Styles::dim())),
             Line::from(Span::styled(
                 "  a spec, it will appear here.",
                 Styles::dim(),
             )),
             Line::from(""),
-            Line::from(Span::styled(
-                "  Review it, then Ctrl+F to",
-                Styles::dim(),
-            )),
-            Line::from(Span::styled(
-                "  save as PROMPT.md",
-                Styles::dim(),
-            )),
+            Line::from(Span::styled("  Review it, then Ctrl+F to", Styles::dim())),
+            Line::from(Span::styled("  save as PROMPT.md", Styles::dim())),
         ])
         .style(Styles::default());
         hint.render(inner, buf);
@@ -282,7 +276,10 @@ fn render_finalize_confirm_overlay(app: &App, area: Rect, buf: &mut Buffer) {
 
     // Show first few lines of draft
     for line in app.thread.draft.lines().take(5) {
-        lines.push(Line::from(Span::styled(format!("  {line}"), Styles::default())));
+        lines.push(Line::from(Span::styled(
+            format!("  {line}"),
+            Styles::default(),
+        )));
     }
     if app.thread.draft.lines().count() > 5 {
         lines.push(Line::from(Span::styled("  ...", Styles::dim())));

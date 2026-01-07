@@ -7,13 +7,338 @@ use crate::config::{Config, ModelConfig, ModelSelection, VerifierConfig};
 use crate::state::{Cooldowns, RunState};
 use regex::Regex;
 use sha2::{Digest, Sha256};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::Duration;
-use tokio::io::AsyncWriteExt;
+use std::time::{Duration, Instant};
+use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::process::Command;
+use tokio::sync::mpsc;
 use tokio::time::timeout;
+use uuid::Uuid;
+
+/// Events emitted during a run for TUI observation.
+#[derive(Debug, Clone)]
+pub enum RunEvent {
+    /// Run started.
+    Started {
+        run_id: String,
+        max_iterations: usize,
+    },
+    /// Iteration started.
+    IterationStarted { iteration: usize, model: String },
+    /// Model invocation completed.
+    ModelCompleted {
+        iteration: usize,
+        model: String,
+        duration_ms: u64,
+        has_promise: bool,
+        rate_limited: bool,
+        output_preview: String,
+    },
+    /// Verifier completed.
+    VerifierCompleted {
+        iteration: usize,
+        name: String,
+        passed: bool,
+        duration_ms: u64,
+    },
+    /// Model entered cooldown.
+    CooldownStarted { model: String, duration_secs: u64 },
+    /// Iteration completed.
+    IterationCompleted {
+        iteration: usize,
+        all_verifiers_passed: bool,
+    },
+    /// Run completed successfully.
+    Completed { iteration: usize, reason: String },
+    /// Run failed.
+    Failed { iteration: usize, error: String },
+    /// Run was cancelled.
+    Cancelled { iteration: usize },
+    /// Status update (for progress display).
+    Status { message: String },
+}
+
+/// Configuration for a run.
+#[derive(Debug, Clone)]
+pub struct RunConfig {
+    /// Maximum iterations (0 = unlimited).
+    pub max_iterations: usize,
+    /// Maximum runtime in seconds (0 = unlimited).
+    pub max_runtime_secs: u64,
+    /// Path to the prompt file.
+    pub prompt_path: PathBuf,
+    /// Repository path.
+    pub repo_path: PathBuf,
+}
+
+/// Handle for controlling a running loop.
+#[derive(Debug)]
+pub struct RunHandle {
+    /// Channel to send cancel signal.
+    cancel_tx: mpsc::Sender<()>,
+}
+
+impl RunHandle {
+    /// Cancel the running loop (async version).
+    pub async fn cancel(&self) {
+        let _ = self.cancel_tx.send(()).await;
+    }
+
+    /// Try to cancel the running loop (non-blocking version).
+    /// Returns true if the cancel signal was sent successfully.
+    pub fn try_cancel(&self) -> bool {
+        self.cancel_tx.try_send(()).is_ok()
+    }
+}
+
+/// Run the main loop with event emission.
+///
+/// Returns a handle for cancellation and spawns the loop as a background task.
+pub fn start_run(
+    config: Config,
+    run_config: RunConfig,
+    event_tx: mpsc::UnboundedSender<RunEvent>,
+) -> RunHandle {
+    let (cancel_tx, cancel_rx) = mpsc::channel(1);
+
+    tokio::spawn(async move {
+        run_loop(config, run_config, event_tx, cancel_rx).await;
+    });
+
+    RunHandle { cancel_tx }
+}
+
+/// The main run loop.
+///
+/// # Event Channel
+/// All event sends use `let _ = event_tx.send(...)` to silently ignore
+/// failures. This is intentional: if the receiver is dropped (e.g., TUI
+/// closed), the run should continue but stop sending events.
+#[allow(clippy::too_many_lines)]
+async fn run_loop(
+    config: Config,
+    run_config: RunConfig,
+    event_tx: mpsc::UnboundedSender<RunEvent>,
+    mut cancel_rx: mpsc::Receiver<()>,
+) {
+    let run_id = Uuid::new_v4().to_string()[..8].to_string();
+    let start_time = Instant::now();
+
+    // Load or create state (using spawn_blocking for serde operations)
+    let ralf_dir = run_config.repo_path.join(".ralf");
+    let state_path = ralf_dir.join("state.json");
+    let cooldowns_path = ralf_dir.join("cooldowns.json");
+
+    let state_path_clone = state_path.clone();
+    let mut state = tokio::task::spawn_blocking(move || {
+        RunState::load(&state_path_clone).unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default();
+
+    let cooldowns_path_clone = cooldowns_path.clone();
+    let mut cooldowns = tokio::task::spawn_blocking(move || {
+        Cooldowns::load(&cooldowns_path_clone).unwrap_or_default()
+    })
+    .await
+    .unwrap_or_default();
+
+    // Create run directory (async)
+    let run_dir = ralf_dir.join("runs").join(&run_id);
+    if let Err(e) = tokio::fs::create_dir_all(&run_dir).await {
+        let _ = event_tx.send(RunEvent::Failed {
+            iteration: 0,
+            error: format!("Failed to create run directory: {e}"),
+        });
+        return;
+    }
+
+    // Load prompt (async)
+    let prompt = match tokio::fs::read_to_string(&run_config.prompt_path).await {
+        Ok(p) => p,
+        Err(e) => {
+            let _ = event_tx.send(RunEvent::Failed {
+                iteration: 0,
+                error: format!("Failed to read prompt: {e}"),
+            });
+            return;
+        }
+    };
+
+    let _ = event_tx.send(RunEvent::Started {
+        run_id: run_id.clone(),
+        max_iterations: run_config.max_iterations,
+    });
+
+    let mut iteration = 0;
+
+    loop {
+        iteration += 1;
+
+        // Check cancellation
+        if cancel_rx.try_recv().is_ok() {
+            let _ = event_tx.send(RunEvent::Cancelled { iteration });
+            break;
+        }
+
+        // Check max iterations
+        if run_config.max_iterations > 0 && iteration > run_config.max_iterations {
+            let _ = event_tx.send(RunEvent::Completed {
+                iteration: iteration - 1,
+                reason: "Max iterations reached".into(),
+            });
+            break;
+        }
+
+        // Check max runtime
+        if run_config.max_runtime_secs > 0
+            && start_time.elapsed().as_secs() > run_config.max_runtime_secs
+        {
+            let _ = event_tx.send(RunEvent::Completed {
+                iteration: iteration - 1,
+                reason: "Max runtime reached".into(),
+            });
+            break;
+        }
+
+        // Clear expired cooldowns
+        cooldowns.clear_expired();
+
+        // Select model
+        let model = match select_model(&config, &cooldowns, &mut state) {
+            Some(m) => m.clone(),
+            None => {
+                // Use actual remaining cooldown time instead of fixed 5 seconds
+                let wait_secs = cooldowns.earliest_expiry().map_or(5, |exp| {
+                    let now = crate::state::current_timestamp();
+                    exp.saturating_sub(now).max(1) // At least 1 second
+                });
+
+                let _ = event_tx.send(RunEvent::Status {
+                    message: format!("All models in cooldown, waiting {wait_secs}s..."),
+                });
+                // Wait for cooldown with cancel check
+                tokio::select! {
+                    _ = cancel_rx.recv() => {
+                        let _ = event_tx.send(RunEvent::Cancelled { iteration });
+                        return;
+                    }
+                    _ = tokio::time::sleep(Duration::from_secs(wait_secs)) => {}
+                }
+                continue;
+            }
+        };
+
+        let _ = event_tx.send(RunEvent::IterationStarted {
+            iteration,
+            model: model.name.clone(),
+        });
+
+        // Invoke model with cancel check
+        let invoke_result = tokio::select! {
+            _ = cancel_rx.recv() => {
+                let _ = event_tx.send(RunEvent::Cancelled { iteration });
+                return;
+            }
+            result = invoke_model(&model, &prompt, &run_dir) => result
+        };
+
+        let result = match invoke_result {
+            Ok(mut r) => {
+                r.has_promise = check_promise(&r.stdout, &config.completion_promise);
+                r
+            }
+            Err(e) => {
+                let _ = event_tx.send(RunEvent::Failed {
+                    iteration,
+                    error: format!("Model invocation failed: {e}"),
+                });
+
+                // Apply cooldown on error
+                cooldowns.set_cooldown(
+                    &model.name,
+                    model.default_cooldown_seconds,
+                    "invocation error",
+                );
+                // Save cooldowns asynchronously
+                let cooldowns_clone = cooldowns.clone();
+                let path = cooldowns_path.clone();
+                let _ = tokio::task::spawn_blocking(move || cooldowns_clone.save(&path)).await;
+
+                let _ = event_tx.send(RunEvent::CooldownStarted {
+                    model: model.name.clone(),
+                    duration_secs: model.default_cooldown_seconds,
+                });
+
+                continue;
+            }
+        };
+
+        // Send full output to TUI (no truncation - TUI handles display)
+        let output_preview = result.stdout.clone();
+
+        let _ = event_tx.send(RunEvent::ModelCompleted {
+            iteration,
+            model: model.name.clone(),
+            duration_ms: result.duration_ms,
+            has_promise: result.has_promise,
+            rate_limited: result.rate_limited,
+            output_preview,
+        });
+
+        // Handle rate limiting
+        if result.rate_limited {
+            cooldowns.set_cooldown(&model.name, model.default_cooldown_seconds, "rate limited");
+            // Save cooldowns asynchronously
+            let cooldowns_clone = cooldowns.clone();
+            let path = cooldowns_path.clone();
+            let _ = tokio::task::spawn_blocking(move || cooldowns_clone.save(&path)).await;
+
+            let _ = event_tx.send(RunEvent::CooldownStarted {
+                model: model.name.clone(),
+                duration_secs: model.default_cooldown_seconds,
+            });
+
+            continue;
+        }
+
+        // Complete if promise found
+        // Note: AI-powered criteria verification will be added in a future milestone
+        if result.has_promise {
+            let _ = event_tx.send(RunEvent::IterationCompleted {
+                iteration,
+                all_verifiers_passed: true, // Assuming success for now
+            });
+
+            let _ = event_tx.send(RunEvent::Completed {
+                iteration,
+                reason: "Promise fulfilled".into(),
+            });
+            break;
+        } else {
+            let _ = event_tx.send(RunEvent::IterationCompleted {
+                iteration,
+                all_verifiers_passed: false,
+            });
+        }
+
+        // Save state (iteration is u64 now, safe conversion)
+        state.iteration = iteration as u64;
+        let state_clone = state.clone();
+        let path = state_path.clone();
+        let _ = tokio::task::spawn_blocking(move || state_clone.save(&path)).await;
+    }
+
+    // Final state save (awaited to ensure completion before function returns)
+    let state_clone = state.clone();
+    let path = state_path.clone();
+    let _ = tokio::task::spawn_blocking(move || state_clone.save(&path)).await;
+
+    let cooldowns_clone = cooldowns.clone();
+    let path = cooldowns_path.clone();
+    let _ = tokio::task::spawn_blocking(move || cooldowns_clone.save(&path)).await;
+}
 
 /// Result of a model invocation.
 #[derive(Debug, Clone)]
@@ -106,9 +431,9 @@ pub async fn invoke_model(
             let combined = format!("{stdout}\n{stderr}");
             let rate_limited = check_rate_limit(&combined, &model.rate_limit_patterns);
 
-            // Write log file
+            // Write log file (async)
             let log_path = run_dir.join(format!("{}.log", model.name));
-            write_log(&log_path, &stdout, &stderr)?;
+            write_log(&log_path, &stdout, &stderr).await?;
 
             Ok(InvocationResult {
                 model: model.name.clone(),
@@ -131,22 +456,23 @@ pub async fn invoke_model(
 /// Check if output contains rate limit patterns.
 fn check_rate_limit(output: &str, patterns: &[String]) -> bool {
     let lower = output.to_lowercase();
-    patterns
-        .iter()
-        .any(|p| lower.contains(&p.to_lowercase()))
+    patterns.iter().any(|p| lower.contains(&p.to_lowercase()))
 }
 
 /// Write log file with stdout and stderr.
-fn write_log(path: &Path, stdout: &str, stderr: &str) -> Result<(), RunnerError> {
+async fn write_log(path: &Path, stdout: &str, stderr: &str) -> Result<(), RunnerError> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(RunnerError::Io)?;
+        tokio::fs::create_dir_all(parent).await.map_err(RunnerError::Io)?;
     }
 
-    let mut file = std::fs::File::create(path).map_err(RunnerError::Io)?;
-    writeln!(file, "=== STDOUT ===").map_err(RunnerError::Io)?;
-    writeln!(file, "{stdout}").map_err(RunnerError::Io)?;
-    writeln!(file, "\n=== STDERR ===").map_err(RunnerError::Io)?;
-    writeln!(file, "{stderr}").map_err(RunnerError::Io)?;
+    let file = tokio::fs::File::create(path).await.map_err(RunnerError::Io)?;
+    let mut writer = BufWriter::new(file);
+    writer.write_all(b"=== STDOUT ===\n").await.map_err(RunnerError::Io)?;
+    writer.write_all(stdout.as_bytes()).await.map_err(RunnerError::Io)?;
+    writer.write_all(b"\n\n=== STDERR ===\n").await.map_err(RunnerError::Io)?;
+    writer.write_all(stderr.as_bytes()).await.map_err(RunnerError::Io)?;
+    writer.write_all(b"\n").await.map_err(RunnerError::Io)?;
+    writer.flush().await.map_err(RunnerError::Io)?;
     Ok(())
 }
 
@@ -178,9 +504,9 @@ pub async fn run_verifier(
             let stderr = String::from_utf8_lossy(&output.stderr);
             let combined = format!("{stdout}\n{stderr}");
 
-            // Write verifier log
+            // Write verifier log (async)
             let log_path = run_dir.join(format!("{}.log", verifier.name));
-            write_log(&log_path, &stdout, &stderr)?;
+            write_log(&log_path, &stdout, &stderr).await?;
 
             Ok(VerifierResult {
                 name: verifier.name.clone(),

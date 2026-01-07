@@ -3,10 +3,17 @@
 use crate::event::Action;
 use crate::ui::widgets::TextInputState;
 use ralf_engine::{
-    discover_models, draft_has_promise, get_git_info, save_draft_snapshot, ChatMessage, Config,
-    GitInfo, ModelConfig, ModelInfo, ProbeResult, Thread,
+    discover_models, draft_has_promise, get_git_info, parse_criteria, save_draft_snapshot,
+    ChatMessage, Config, GitInfo, ModelConfig, ModelInfo, ProbeResult, RunConfig, RunEvent,
+    RunHandle, Thread,
 };
+use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::time::Instant;
+use tokio::sync::{mpsc, oneshot};
+
+/// Maximum number of events to keep in the event log.
+const MAX_EVENTS: usize = 100;
 
 /// The current screen being displayed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -17,6 +24,70 @@ pub enum Screen {
     SpecStudio,
     FinalizeConfirm,
     FinalizeError,
+    RunDashboard,
+}
+
+/// Status of a run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RunStatus {
+    /// No run has started yet.
+    #[default]
+    Idle,
+    /// Run is currently active.
+    Running,
+    /// Run completed successfully.
+    Completed,
+    /// Run was cancelled by user.
+    Cancelled,
+    /// Run failed with an error.
+    Failed,
+}
+
+/// State for an active or completed run.
+#[derive(Debug, Default)]
+pub struct RunState {
+    /// Current status of the run.
+    pub status: RunStatus,
+    /// Run ID.
+    pub run_id: Option<String>,
+    /// Current iteration number.
+    pub current_iteration: usize,
+    /// Maximum iterations (0 = unlimited).
+    pub max_iterations: usize,
+    /// Currently selected/running model.
+    pub current_model: Option<String>,
+    /// When the run started.
+    pub started_at: Option<Instant>,
+    /// Model output (preview).
+    pub model_output: String,
+    /// Verifier results: (name, passed, duration_ms).
+    pub verifier_results: Vec<(String, bool, u64)>,
+    /// Active cooldowns: (model, remaining_secs).
+    pub cooldowns: Vec<(String, u64)>,
+    /// Event log messages (bounded to MAX_EVENTS).
+    pub events: VecDeque<String>,
+    /// Scroll offset for output.
+    pub output_scroll: usize,
+    /// Whether to auto-follow output (scroll to bottom on new content).
+    pub follow_output: bool,
+    /// Whether a cancel has been requested (prevents spamming).
+    pub cancel_requested: bool,
+    /// Completion reason (if completed).
+    pub completion_reason: Option<String>,
+    /// Error message (if failed).
+    pub error_message: Option<String>,
+    /// Parsed completion criteria from PROMPT.md.
+    pub criteria: Vec<String>,
+}
+
+impl RunState {
+    /// Push an event to the log, removing the oldest if at capacity.
+    pub fn push_event(&mut self, event: String) {
+        if self.events.len() >= MAX_EVENTS {
+            self.events.pop_front();
+        }
+        self.events.push_back(event);
+    }
 }
 
 /// Model status after probing.
@@ -93,6 +164,19 @@ pub struct App {
 
     /// Scroll offset for the draft pane.
     pub draft_scroll: usize,
+
+    // === Run Dashboard state ===
+    /// State for the current or last run.
+    pub run_state: RunState,
+
+    /// Handle for cancelling the run (if active).
+    pub run_handle: Option<RunHandle>,
+
+    /// Channel receiver for run events.
+    pub run_event_rx: Option<mpsc::UnboundedReceiver<RunEvent>>,
+
+    /// Channel receiver for background git info updates.
+    git_info_rx: Option<oneshot::Receiver<GitInfo>>,
 }
 
 impl App {
@@ -147,6 +231,11 @@ impl App {
             chat_in_progress: false,
             transcript_scroll: 0,
             draft_scroll: 0,
+            // Run Dashboard state
+            run_state: RunState::default(),
+            run_handle: None,
+            run_event_rx: None,
+            git_info_rx: None,
         }
     }
 
@@ -157,6 +246,13 @@ impl App {
             Action::Quit => {
                 if self.show_help {
                     self.show_help = false;
+                } else if self.screen == Screen::RunDashboard {
+                    // On RunDashboard, Ctrl+C cancels if running, otherwise goes back
+                    if self.run_state.status == RunStatus::Running {
+                        self.request_cancel_run();
+                    } else {
+                        self.screen = Screen::Welcome;
+                    }
                 } else {
                     // Save thread if we're in SpecStudio before quitting
                     if self.screen == Screen::SpecStudio {
@@ -187,6 +283,7 @@ impl App {
             Screen::SpecStudio => self.handle_spec_studio_action(action),
             Screen::FinalizeConfirm => self.handle_finalize_confirm_action(action),
             Screen::FinalizeError => self.handle_finalize_error_action(action),
+            Screen::RunDashboard => self.handle_run_dashboard_action(action),
         }
     }
 
@@ -200,6 +297,14 @@ impl App {
                 // Only allow chat if config exists
                 if self.config_exists {
                     self.screen = Screen::SpecStudio;
+                }
+            }
+            Action::Run => {
+                // Only allow run if config exists and PROMPT.md exists
+                let prompt_path = self.repo_path.join("PROMPT.md");
+                if self.config_exists && prompt_path.exists() {
+                    // Criteria will be loaded when run starts via start_run()
+                    self.screen = Screen::RunDashboard;
                 }
             }
             _ => {}
@@ -226,7 +331,8 @@ impl App {
                     model.enabled = !model.enabled;
                 }
             }
-            Action::Retry => {
+            Action::Run => {
+                // In setup context, 'r' means retry probing
                 self.start_probing();
             }
             Action::Left | Action::Right => {
@@ -318,7 +424,10 @@ impl App {
 
         let config = Config {
             model_priority: enabled_model_names.clone(),
-            models: enabled_model_names.iter().map(|n| ModelConfig::default_for(n)).collect(),
+            models: enabled_model_names
+                .iter()
+                .map(|n| ModelConfig::default_for(n))
+                .collect(),
             model_selection: selection,
             verifiers: vec![ralf_engine::VerifierConfig::default_tests()],
             completion_promise: self.promise_tag.clone(),
@@ -358,6 +467,42 @@ impl App {
                 self.notification = None;
             }
         }
+
+        // Check for background git info updates
+        if let Some(rx) = &mut self.git_info_rx {
+            match rx.try_recv() {
+                Ok(info) => {
+                    self.git_info = info;
+                    self.git_info_rx = None;
+                }
+                Err(oneshot::error::TryRecvError::Closed) => {
+                    // Sender dropped without sending, clear receiver
+                    self.git_info_rx = None;
+                }
+                Err(oneshot::error::TryRecvError::Empty) => {
+                    // Still waiting, continue
+                }
+            }
+        }
+    }
+
+    /// Spawn a background task to refresh git info.
+    /// The result will be picked up in the next tick.
+    fn spawn_git_info_update(&mut self) {
+        // Don't spawn if one is already in progress
+        if self.git_info_rx.is_some() {
+            return;
+        }
+
+        let (tx, rx) = oneshot::channel();
+        self.git_info_rx = Some(rx);
+
+        // Spawn blocking task to run git commands without blocking the UI
+        tokio::task::spawn_blocking(move || {
+            let info = get_git_info();
+            // Ignore error if receiver was dropped (app quit)
+            let _ = tx.send(info);
+        });
     }
 
     // === Spec Studio handlers ===
@@ -460,7 +605,8 @@ impl App {
             self.thread.draft = content.clone();
         }
 
-        self.thread.add_message(ChatMessage::assistant(content, model));
+        self.thread
+            .add_message(ChatMessage::assistant(content, model));
         // Auto-save thread after each response
         let spec_dir = self.repo_path.join(".ralf").join("spec");
         let _ = self.thread.save(&spec_dir);
@@ -523,7 +669,11 @@ impl App {
             content.push_str(&self.thread.draft);
         }
 
-        let export_path = self.repo_path.join(".ralf").join("spec").join("transcript-export.md");
+        let export_path = self
+            .repo_path
+            .join(".ralf")
+            .join("spec")
+            .join("transcript-export.md");
         match std::fs::write(&export_path, &content) {
             Ok(()) => {
                 self.set_notification(format!("Exported to {}", export_path.display()));
@@ -532,5 +682,327 @@ impl App {
                 self.set_notification(format!("Export failed: {e}"));
             }
         }
+    }
+
+    // === Run Dashboard handlers ===
+
+    fn handle_run_dashboard_action(&mut self, action: Action) {
+        match action {
+            Action::Back | Action::Cancel => {
+                if self.run_state.status == RunStatus::Running {
+                    // Cancel the run
+                    self.request_cancel_run();
+                } else {
+                    // Go back to welcome
+                    self.screen = Screen::Welcome;
+                }
+            }
+            Action::Select => {
+                if self.run_state.status != RunStatus::Running {
+                    // Start a new run (resets state)
+                    self.start_run();
+                }
+            }
+            // Note: Tab actions are no-ops in multi-pane view
+            Action::NextTab | Action::PrevTab | Action::Tab(_) => {}
+            Action::ToggleFollow => {
+                self.run_state.follow_output = !self.run_state.follow_output;
+            }
+            Action::Up => {
+                if self.run_state.output_scroll > 0 {
+                    self.run_state.output_scroll -= 1;
+                    // Disable follow when user scrolls up
+                    self.run_state.follow_output = false;
+                }
+            }
+            Action::Down => {
+                // Bound scroll to content length (leave at least 1 visible line)
+                let total_lines = self.run_state.model_output.lines().count();
+                let max_scroll = total_lines.saturating_sub(1);
+                if self.run_state.output_scroll < max_scroll {
+                    self.run_state.output_scroll += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Start a new run.
+    pub fn start_run(&mut self) {
+        // Check prerequisites
+        let Some(config) = self.config.clone() else {
+            self.set_notification("No config found. Run setup first.".to_string());
+            return;
+        };
+
+        let prompt_path = self.repo_path.join("PROMPT.md");
+        if !prompt_path.exists() {
+            self.set_notification("No PROMPT.md found. Create a spec first.".to_string());
+            return;
+        }
+
+        // Parse criteria from PROMPT.md
+        let criteria = if let Ok(prompt_content) = std::fs::read_to_string(&prompt_path) {
+            parse_criteria(&prompt_content)
+        } else {
+            Vec::new()
+        };
+
+        // Reset run state
+        self.run_state = RunState {
+            status: RunStatus::Running,
+            started_at: Some(Instant::now()),
+            max_iterations: 10, // Default max iterations
+            follow_output: true, // Auto-follow by default
+            criteria,
+            ..Default::default()
+        };
+
+        // Create event channel
+        let (event_tx, event_rx) = mpsc::unbounded_channel();
+        self.run_event_rx = Some(event_rx);
+
+        // Create run config
+        let run_config = RunConfig {
+            max_iterations: self.run_state.max_iterations,
+            max_runtime_secs: 0, // No timeout for now
+            prompt_path,
+            repo_path: self.repo_path.clone(),
+        };
+
+        // Update git info at run start
+        self.git_info = get_git_info();
+
+        // Start the run
+        let handle = ralf_engine::start_run(config, run_config, event_tx);
+        self.run_handle = Some(handle);
+
+        self.run_state.push_event("Run started".to_string());
+    }
+
+    /// Request cancellation of the current run.
+    pub fn request_cancel_run(&mut self) {
+        // Avoid spamming cancel requests
+        if self.run_state.cancel_requested {
+            return;
+        }
+
+        if let Some(handle) = &self.run_handle {
+            // Use non-blocking try_cancel to send signal immediately
+            if handle.try_cancel() {
+                self.run_state.cancel_requested = true;
+                self.run_state
+                    .push_event("Cancel requested...".to_string());
+            } else {
+                self.run_state
+                    .push_event("Cancel signal failed (channel full)".to_string());
+            }
+        }
+    }
+
+    /// Process any pending run events.
+    pub fn process_run_events(&mut self) {
+        // Collect events first to avoid borrow issues
+        let events: Vec<RunEvent> = {
+            let Some(rx) = &mut self.run_event_rx else {
+                return;
+            };
+            let mut events = Vec::new();
+            while let Ok(event) = rx.try_recv() {
+                events.push(event);
+            }
+            events
+        };
+
+        // Process collected events
+        for event in events {
+            self.handle_run_event(event);
+        }
+    }
+
+    /// Handle a single run event.
+    fn handle_run_event(&mut self, event: RunEvent) {
+        match event {
+            RunEvent::Started {
+                run_id,
+                max_iterations,
+            } => {
+                self.run_state.run_id = Some(run_id.clone());
+                self.run_state.max_iterations = max_iterations;
+                self.run_state.push_event(format!("Run {run_id} started"));
+            }
+            RunEvent::IterationStarted { iteration, model } => {
+                self.run_state.current_iteration = iteration;
+                self.run_state.current_model = Some(model.clone());
+                self.run_state.model_output.clear();
+                self.run_state.output_scroll = 0;
+                // Clear previous iteration's results
+                self.run_state.verifier_results.clear();
+                // Clear stale cooldowns - the engine handles actual expiry
+                self.run_state.cooldowns.clear();
+                self.run_state
+                    .push_event(format!("Iteration {iteration}: {model}"));
+            }
+            RunEvent::ModelCompleted {
+                iteration,
+                model,
+                duration_ms,
+                has_promise,
+                rate_limited,
+                output_preview,
+            } => {
+                self.run_state.model_output = output_preview;
+
+                // Auto-scroll to bottom if follow mode is enabled
+                if self.run_state.follow_output {
+                    let total_lines = self.run_state.model_output.lines().count();
+                    self.run_state.output_scroll = total_lines.saturating_sub(1);
+                }
+
+                let status = if rate_limited {
+                    "rate limited"
+                } else if has_promise {
+                    "promise found"
+                } else {
+                    "no promise"
+                };
+                self.run_state.push_event(format!(
+                    "Model {} completed ({}ms) - {}",
+                    model, duration_ms, status
+                ));
+
+                // Note: git info is updated at run start, not after each model
+                // to avoid blocking the event loop with shell commands
+
+                // Ignore unused variable warnings
+                let _ = iteration;
+            }
+            RunEvent::VerifierCompleted {
+                iteration,
+                name,
+                passed,
+                duration_ms,
+            } => {
+                self.run_state
+                    .verifier_results
+                    .push((name.clone(), passed, duration_ms));
+                let status = if passed { "PASS" } else { "FAIL" };
+                self.run_state
+                    .push_event(format!("Verifier {name}: {status}"));
+                let _ = iteration;
+            }
+            RunEvent::CooldownStarted {
+                model,
+                duration_secs,
+            } => {
+                self.run_state
+                    .cooldowns
+                    .push((model.clone(), duration_secs));
+                self.run_state
+                    .push_event(format!("{model} in cooldown ({duration_secs}s)"));
+            }
+            RunEvent::IterationCompleted {
+                iteration,
+                all_verifiers_passed,
+            } => {
+                // Keep verifier_results visible - they're cleared on next IterationStarted
+                let status = if all_verifiers_passed {
+                    "all passed"
+                } else {
+                    "some failed"
+                };
+                self.run_state.push_event(format!(
+                    "Iteration {iteration} complete - verifiers: {status}"
+                ));
+            }
+            RunEvent::Completed { iteration, reason } => {
+                self.run_state.status = RunStatus::Completed;
+                self.run_state.completion_reason = Some(reason.clone());
+                self.run_state
+                    .push_event(format!("Completed at iteration {iteration}: {reason}"));
+                self.run_handle = None;
+                self.run_event_rx = None;
+                // Refresh git info in background to show final state
+                self.spawn_git_info_update();
+            }
+            RunEvent::Failed { iteration, error } => {
+                self.run_state.status = RunStatus::Failed;
+                self.run_state.error_message = Some(error.clone());
+                self.run_state
+                    .push_event(format!("Failed at iteration {iteration}: {error}"));
+                self.run_handle = None;
+                self.run_event_rx = None;
+                // Refresh git info in background to show final state
+                self.spawn_git_info_update();
+            }
+            RunEvent::Cancelled { iteration } => {
+                self.run_state.status = RunStatus::Cancelled;
+                self.run_state
+                    .push_event(format!("Cancelled at iteration {iteration}"));
+                self.run_handle = None;
+                self.run_event_rx = None;
+                // Refresh git info in background to show final state
+                self.spawn_git_info_update();
+            }
+            RunEvent::Status { message } => {
+                self.run_state.push_event(message);
+            }
+        }
+    }
+
+    /// Check if PROMPT.md exists.
+    pub fn prompt_exists(&self) -> bool {
+        self.repo_path.join("PROMPT.md").exists()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_run_state_default() {
+        let state = RunState::default();
+        assert_eq!(state.status, RunStatus::Idle);
+        assert!(state.run_id.is_none());
+        assert_eq!(state.current_iteration, 0);
+        assert_eq!(state.max_iterations, 0);
+        assert!(state.current_model.is_none());
+        assert!(state.started_at.is_none());
+        assert!(state.model_output.is_empty());
+        assert!(state.verifier_results.is_empty());
+        assert!(state.cooldowns.is_empty());
+        assert!(state.events.is_empty());
+        assert!(state.criteria.is_empty());
+    }
+
+    #[test]
+    fn test_screen_enum() {
+        assert_eq!(Screen::default(), Screen::Welcome);
+        assert_ne!(Screen::Welcome, Screen::Setup);
+        assert_ne!(Screen::Setup, Screen::SpecStudio);
+        assert_ne!(Screen::SpecStudio, Screen::RunDashboard);
+    }
+
+    #[test]
+    fn test_model_status_creation() {
+        let info = ModelInfo {
+            name: "test".to_string(),
+            found: true,
+            callable: true,
+            path: Some("/usr/bin/test".to_string()),
+            version: None,
+            issues: vec![],
+        };
+        let status = ModelStatus {
+            info,
+            probe_result: None,
+            probing: false,
+            probe_in_flight: false,
+            enabled: true,
+        };
+        assert_eq!(status.info.name, "test");
+        assert!(status.enabled);
+        assert!(!status.probing);
     }
 }

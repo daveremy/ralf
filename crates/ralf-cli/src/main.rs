@@ -52,11 +52,11 @@ enum Commands {
     Run {
         /// Maximum number of iterations
         #[arg(long)]
-        max_iterations: Option<u32>,
+        max_iterations: Option<u64>,
 
         /// Maximum runtime in seconds
         #[arg(long)]
-        max_seconds: Option<u32>,
+        max_seconds: Option<u64>,
 
         /// Run on a specific branch
         #[arg(long)]
@@ -291,8 +291,8 @@ fn cmd_probe(json: bool, model_filter: Option<String>, timeout_secs: u64) {
 }
 
 fn cmd_run(
-    max_iterations: Option<u32>,
-    max_seconds: Option<u32>,
+    max_iterations: Option<u64>,
+    max_seconds: Option<u64>,
     _branch: Option<String>,
     _models: Option<Vec<String>>,
 ) {
@@ -328,7 +328,13 @@ fn cmd_run(
 
     // Run the loop
     let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-    rt.block_on(run_loop(config, ralf_dir, prompt_path, max_iterations, max_seconds));
+    rt.block_on(run_loop(
+        config,
+        ralf_dir,
+        prompt_path,
+        max_iterations,
+        max_seconds,
+    ));
 }
 
 fn cmd_status(json: bool) {
@@ -420,8 +426,8 @@ async fn run_loop(
     config: Config,
     ralf_dir: &Path,
     prompt_path: &Path,
-    max_iterations: Option<u32>,
-    max_seconds: Option<u32>,
+    max_iterations: Option<u64>,
+    max_seconds: Option<u64>,
 ) {
     let state_path = ralf_dir.join("state.json");
     let cooldowns_path = ralf_dir.join("cooldowns.json");
@@ -635,13 +641,25 @@ async fn run_loop(
 
         // Determine status and reason
         let (status, reason) = if invocation.has_promise && all_passed {
-            (IterationStatus::Success, "All verifiers passed with promise")
+            (
+                IterationStatus::Success,
+                "All verifiers passed with promise",
+            )
         } else if invocation.has_promise && !all_passed {
-            (IterationStatus::VerifierFailed, "Promise found but verifiers failed")
+            (
+                IterationStatus::VerifierFailed,
+                "Promise found but verifiers failed",
+            )
         } else if !invocation.has_promise && all_passed {
-            (IterationStatus::VerifierFailed, "Verifiers passed but no promise")
+            (
+                IterationStatus::VerifierFailed,
+                "Verifiers passed but no promise",
+            )
         } else {
-            (IterationStatus::VerifierFailed, "Verifiers failed, no promise")
+            (
+                IterationStatus::VerifierFailed,
+                "Verifiers failed, no promise",
+            )
         };
 
         // Write changelog entry

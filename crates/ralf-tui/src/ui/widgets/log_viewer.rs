@@ -6,7 +6,9 @@ use ratatui::{
     buffer::Buffer,
     layout::Rect,
     text::{Line, Text},
-    widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget},
+    widgets::{
+        Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget,
+    },
 };
 
 /// A scrollable log viewer widget.

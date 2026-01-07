@@ -106,6 +106,9 @@ async fn run_loop(
                 app::Screen::FinalizeError => {
                     screens::spec_studio::FinalizeErrorScreen.render(app, area, buf);
                 }
+                app::Screen::RunDashboard => {
+                    screens::run_dashboard::RunDashboardScreen.render(app, area, buf);
+                }
             }
 
             // Render help overlay if visible
@@ -160,6 +163,8 @@ async fn run_loop(
                 }
                 Event::Tick => {
                     app.tick();
+                    // Process any pending run events
+                    app.process_run_events();
                 }
                 Event::Resize(_, _) => {
                     // Terminal will handle resize automatically
@@ -231,7 +236,8 @@ async fn handle_spec_studio_key(
 
                 // Start chat request
                 if let Some(model_status) = app.current_chat_model() {
-                    let model_config = ralf_engine::ModelConfig::default_for(&model_status.info.name);
+                    let model_config =
+                        ralf_engine::ModelConfig::default_for(&model_status.info.name);
                     let context = app.thread.to_context();
 
                     app.chat_in_progress = true;

@@ -26,6 +26,9 @@ impl Screen for WelcomeScreen {
         let mut hints = vec![KeyHint::new("s", "Setup")];
         if app.config_exists {
             hints.push(KeyHint::new("c", "Chat"));
+            if app.prompt_exists() {
+                hints.push(KeyHint::new("r", "Run"));
+            }
         }
         hints.push(KeyHint::new("?", "Help"));
         hints.push(KeyHint::new("q", "Quit"));

@@ -171,7 +171,9 @@ pub fn probe_model(name: &str, timeout: Duration) -> ProbeResult {
                         .suggestions
                         .push(format!("Run `{name} login` or configure credentials"));
                 } else {
-                    result.issues.push(format!("Probe failed: {}", output.stderr));
+                    result
+                        .issues
+                        .push(format!("Probe failed: {}", output.stderr));
                 }
             }
         }
@@ -281,7 +283,10 @@ fn extract_version(output: &str) -> Option<String> {
     for line in output.lines().take(5) {
         let line = line.trim();
         // Match patterns like "v1.2.3", "1.2.3", "version 1.2.3"
-        if line.contains("version") || line.starts_with('v') || line.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        if line.contains("version")
+            || line.starts_with('v')
+            || line.chars().next().is_some_and(|c| c.is_ascii_digit())
+        {
             // Extract just the version number
             let version: String = line
                 .chars()

@@ -13,7 +13,7 @@ pub struct ChangelogEntry<'a> {
     /// Run identifier.
     pub run_id: &'a str,
     /// Iteration number.
-    pub iteration: u32,
+    pub iteration: u64,
     /// Model invocation result.
     pub invocation: &'a InvocationResult,
     /// Verifier results.

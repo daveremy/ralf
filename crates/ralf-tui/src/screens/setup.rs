@@ -56,21 +56,21 @@ fn render_setup_content(app: &App, area: Rect, buf: &mut Buffer) {
         .direction(Direction::Vertical)
         .constraints(if is_first_time {
             vec![
-                Constraint::Length(5),  // Intro text
-                Constraint::Length(2),  // Header
-                Constraint::Min(6),     // Model list
-                Constraint::Length(1),  // Separator
-                Constraint::Length(4),  // Options
-                Constraint::Length(2),  // Footer
+                Constraint::Length(5), // Intro text
+                Constraint::Length(2), // Header
+                Constraint::Min(6),    // Model list
+                Constraint::Length(1), // Separator
+                Constraint::Length(4), // Options
+                Constraint::Length(2), // Footer
             ]
         } else {
             vec![
-                Constraint::Length(0),  // No intro
-                Constraint::Length(2),  // Header
-                Constraint::Min(6),     // Model list
-                Constraint::Length(1),  // Separator
-                Constraint::Length(4),  // Options
-                Constraint::Length(2),  // Footer
+                Constraint::Length(0), // No intro
+                Constraint::Length(2), // Header
+                Constraint::Min(6),    // Model list
+                Constraint::Length(1), // Separator
+                Constraint::Length(4), // Options
+                Constraint::Length(2), // Footer
             ]
         })
         .split(inner);
@@ -113,8 +113,7 @@ fn render_setup_content(app: &App, area: Rect, buf: &mut Buffer) {
     } else {
         Line::from(Span::styled("  Model status:", Styles::dim()))
     };
-    Paragraph::new(vec![Line::from(""), header])
-        .render(chunks[1], buf);
+    Paragraph::new(vec![Line::from(""), header]).render(chunks[1], buf);
 
     // Model list
     render_model_list(app, chunks[2], buf);
@@ -158,7 +157,10 @@ fn render_model_list(app: &App, area: Rect, buf: &mut Buffer) {
             (format!("{bar} probing..."), Styles::dim())
         } else if let Some(result) = &model.probe_result {
             if result.success {
-                let time = result.response_time_ms.map(|ms| format!("{ms}ms")).unwrap_or_default();
+                let time = result
+                    .response_time_ms
+                    .map(|ms| format!("{ms}ms"))
+                    .unwrap_or_default();
                 (
                     format!("{} ready ({})", Symbols::CHECK, time),
                     Styles::success(),
@@ -187,7 +189,14 @@ fn render_model_list(app: &App, area: Rect, buf: &mut Buffer) {
         };
 
         lines.push(Line::from(vec![
-            Span::styled(prefix, if is_selected { Styles::highlight() } else { Styles::dim() }),
+            Span::styled(
+                prefix,
+                if is_selected {
+                    Styles::highlight()
+                } else {
+                    Styles::dim()
+                },
+            ),
             enabled_indicator,
             Span::raw(" "),
             Span::styled(format!("{:<12}", model.info.name), name_style),

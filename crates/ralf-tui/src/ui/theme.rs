@@ -120,7 +120,11 @@ impl Styles {
 }
 
 /// Progress bar rendering.
-#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
 pub fn progress_bar(progress: f32, width: usize) -> String {
     let filled = ((progress * width as f32).round() as usize).min(width);
     let empty = width.saturating_sub(filled);

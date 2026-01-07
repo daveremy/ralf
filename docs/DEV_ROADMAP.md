@@ -130,18 +130,31 @@ DoD:
 - A run can be started and canceled from the TUI.
 - TUI remains responsive during model execution and verifier runs.
 
-### Milestone 5 — Review rounds + spec hardening
+#### Future Enhancements (Run Dashboard)
+- **Configurable max iterations**: Settings overlay to configure max iterations before starting a run.
+- **Run history**: Show previous runs with their outcomes (completed/failed/cancelled).
+- **Live cooldown countdown**: Decrement cooldown timers in real-time instead of clearing on iteration start.
+- **Detailed diff viewer**: Expand Git tab to show actual file diffs, not just changed file list.
+- **Pause/Resume**: Add ability to pause after current iteration and resume later.
+
+### Milestone 5 — AI-powered criteria verification + review rounds
 
 Deliverables:
-- Review Round screen:
-  - run “spec review” prompts through other available models,
-  - present findings as structured checklist,
-  - apply changes into the draft prompt/spec.
-- Improve completion hygiene:
-  - ensure verifiers always run when promise appears,
-  - record “promise seen but verifiers failed” explicitly.
+- **AI Criteria Verification**:
+  - Parse completion criteria from PROMPT.md (already implemented in M4).
+  - After model outputs `<promise>COMPLETE</promise>`, invoke a verifier model.
+  - Verifier model receives: criteria list + current repo state (git diff, file contents).
+  - Verifier responds with structured PASS/FAIL for each criterion.
+  - Display criteria with checkmarks/X in the Criteria pane.
+  - Only complete run if all criteria verified as PASS.
+- **Review Round screen**:
+  - Run "spec review" prompts through other available models.
+  - Present findings as structured checklist.
+  - Apply changes into the draft prompt/spec.
 
 DoD:
+- After promise detected, criteria are verified by a different model.
+- Criteria pane shows PASS/FAIL status for each criterion.
 - User can run at least one review round and apply suggestions into the draft inside the TUI.
 
 ### Milestone 6 — Production polish + release
@@ -171,13 +184,26 @@ DoD:
   - output a promise,
   - output a rate limit string,
   - hang (to test timeouts),
-  - write a file (to simulate “work done”).
-- Stub verifiers:
-  - pass/fail cases.
+  - write a file (to simulate "work done").
+- Criteria parsing tests:
+  - extract bullet points from various markdown formats.
 - Assert:
   - changelog content includes required fields,
   - state/cooldowns updated as expected,
-  - completion gates properly.
+  - completion triggers on promise tag.
+
+### TUI integration tests (future)
+- **ratatui-testlib**: PTY-based E2E testing for user interaction flows
+  - Spawn TUI in pseudo-terminal
+  - Send keyboard input, wait for state changes
+  - Assert screen contents
+- **insta**: Snapshot testing for visual regression
+  - Capture TestBackend buffer state
+  - Compare against reference snapshots
+- Priority test flows:
+  - Welcome → Setup → config saved
+  - Welcome → Spec Studio → Finalize → PROMPT.md created
+  - Welcome → Run Dashboard → start/cancel run
 
 ### Manual smoke tests
 - `claude`, `codex`, `gemini` actual probes on macOS.

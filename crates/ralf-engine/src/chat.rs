@@ -8,11 +8,11 @@ use crate::runner::RunnerError;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
-use std::process::Stdio;
 use uuid::Uuid;
 
 /// Role in a conversation.
@@ -171,10 +171,10 @@ When you produce a draft specification, format it as:
 [One sentence describing the objective]
 
 ## Requirements
-- [Specific, testable requirements]
+- [Specific, testable requirements as bullet points]
 
-## Acceptance Criteria
-- [ ] [Checkable items the agent must complete]
+## Completion Criteria
+- [ ] [Checkable items - each must be independently verifiable]
 
 ## Notes
 [Any constraints, preferences, or context]
@@ -183,6 +183,24 @@ When you produce a draft specification, format it as:
 ```
 
 The `<promise>COMPLETE</promise>` tag signals the spec is ready for the autonomous agent.
+
+## Criteria Guidelines
+IMPORTANT: Each completion criterion will be verified by an AI after the task runs. Write criteria that are:
+
+- **Concrete and observable**: "File `src/utils.rs` exists" not "code is organized"
+- **Independently checkable**: Each criterion can be verified on its own
+- **Based on artifacts**: Files exist, contain specific content, tests pass, etc.
+
+Good examples:
+- [ ] File `hello.txt` exists with content "Hello, World!"
+- [ ] Function `calculate_total` is exported from `src/lib.rs`
+- [ ] All tests in `tests/` pass
+- [ ] No TypeScript errors when running `tsc --noEmit`
+
+Bad examples (too vague):
+- [ ] Code works correctly
+- [ ] Implementation is clean
+- [ ] User experience is good
 
 ## Guidelines
 - Be concise - agents work better with focused specs
@@ -380,8 +398,7 @@ impl Thread {
 
         // First line is metadata
         let meta_line = lines.next().ok_or(ChatError::EmptyThread)?;
-        let metadata: ThreadMetadata =
-            serde_json::from_str(meta_line).map_err(ChatError::Parse)?;
+        let metadata: ThreadMetadata = serde_json::from_str(meta_line).map_err(ChatError::Parse)?;
 
         // Rest are messages
         let mut messages = Vec::new();
@@ -528,7 +545,9 @@ mod tests {
 
     #[test]
     fn test_draft_has_promise() {
-        assert!(draft_has_promise("Some text <promise>COMPLETE</promise> more text"));
+        assert!(draft_has_promise(
+            "Some text <promise>COMPLETE</promise> more text"
+        ));
         assert!(!draft_has_promise("No promise here"));
         assert!(!draft_has_promise("<promise>incomplete"));
     }

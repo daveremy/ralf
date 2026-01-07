@@ -1,5 +1,6 @@
 //! Screen definitions for the ralf TUI.
 
+pub mod run_dashboard;
 pub mod setup;
 pub mod spec_studio;
 pub mod welcome;
@@ -15,8 +16,8 @@ pub trait Screen {
 
 /// Render the help overlay.
 pub fn render_help_overlay(area: Rect, buf: &mut Buffer) {
-    use crate::ui::theme::Styles;
     use crate::ui::centered_fixed;
+    use crate::ui::theme::Styles;
     use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 
     let help_text = r"

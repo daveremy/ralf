@@ -14,7 +14,7 @@ pub struct RunState {
     pub run_id: Option<String>,
 
     /// Current iteration number (1-indexed).
-    pub iteration: u32,
+    pub iteration: u64,
 
     /// Current status.
     pub status: RunStatus,
