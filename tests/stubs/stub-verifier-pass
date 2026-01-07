@@ -1,0 +1,6 @@
+#!/bin/bash
+# Stub verifier that always passes
+
+echo "Running tests..."
+echo "All tests passed!"
+exit 0

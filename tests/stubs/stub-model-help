@@ -1,0 +1,19 @@
+#!/bin/bash
+# Stub model that responds to --help
+
+if [ "$1" = "--help" ]; then
+    echo "stub-model v1.0.0"
+    echo ""
+    echo "Usage: stub-model [OPTIONS]"
+    echo ""
+    echo "Options:"
+    echo "  -p, --prompt     Run with prompt on stdin"
+    echo "  --help           Show this help message"
+    exit 0
+fi
+
+# For non-help invocations, echo the prompt
+input=$(cat)
+echo "Processing: $input"
+echo "<promise>COMPLETE</promise>"
+exit 0

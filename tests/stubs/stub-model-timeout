@@ -1,0 +1,8 @@
+#!/bin/bash
+# Stub model that hangs (for timeout testing)
+
+# Read stdin (ignore)
+cat > /dev/null
+
+# Sleep forever (will be killed by timeout)
+sleep 3600

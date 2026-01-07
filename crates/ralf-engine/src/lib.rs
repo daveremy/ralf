@@ -7,9 +7,23 @@
 //! - Verification runners
 //! - Changelog generation
 
-/// Placeholder function to verify the crate builds correctly.
-///
-/// This will be replaced with actual engine implementation.
+pub mod changelog;
+pub mod config;
+pub mod discovery;
+pub mod runner;
+pub mod state;
+
+// Re-export commonly used types
+pub use changelog::{write_changelog_entry, ChangelogEntry, ChangelogError, IterationStatus};
+pub use config::{Config, ConfigError, ModelConfig, ModelSelection, VerifierConfig};
+pub use discovery::{discover_model, discover_models, probe_model, DiscoveryResult, ModelInfo, ProbeResult};
+pub use runner::{
+    check_promise, extract_promise, get_git_info, hash_prompt, invoke_model, run_verifier,
+    select_model, GitInfo, InvocationResult, RunnerError, VerifierResult,
+};
+pub use state::{Cooldowns, RunState, RunStatus, StateError};
+
+/// Returns the engine version.
 pub fn engine_version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }

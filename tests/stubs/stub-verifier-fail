@@ -1,0 +1,6 @@
+#!/bin/bash
+# Stub verifier that always fails
+
+echo "Running tests..."
+echo "Test failed: Expected 1 but got 2"
+exit 1

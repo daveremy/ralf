@@ -1,0 +1,8 @@
+#!/bin/bash
+# Stub model that fails without rate limit
+
+# Read stdin (ignore)
+cat > /dev/null
+
+echo "Error: Something went wrong" >&2
+exit 1

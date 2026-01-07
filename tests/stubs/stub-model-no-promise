@@ -1,0 +1,10 @@
+#!/bin/bash
+# Stub model that succeeds but without promise tag
+
+# Read stdin
+input=$(cat)
+
+echo "Processing input: $input"
+echo "Result: Task completed."
+# Note: no promise tag
+exit 0

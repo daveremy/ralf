@@ -1,0 +1,8 @@
+#!/bin/bash
+# Stub model that returns rate limit error
+
+# Read stdin (ignore)
+cat > /dev/null
+
+echo "Error: 429 Too Many Requests - Rate limit exceeded" >&2
+exit 1

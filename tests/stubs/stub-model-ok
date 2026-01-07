@@ -1,0 +1,14 @@
+#!/bin/bash
+# Stub model that succeeds with promise
+
+# Read stdin
+input=$(cat)
+
+# Simulate some processing time
+sleep 0.1
+
+# Output with promise tag
+echo "Processing input: $input"
+echo "Result: Task completed successfully."
+echo "<promise>COMPLETE</promise>"
+exit 0
