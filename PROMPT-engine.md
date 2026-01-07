@@ -16,24 +16,24 @@ Implement `.ralf/` runtime directory structure in `ralf-engine`:
 
 ```
 .ralf/
-├── config.json       # Modal selection, verifiers, completion policy
+├── config.json       # Model selection, verifiers, completion policy
 ├── state.json        # Current run state (run_id, iteration, status)
-├── cooldowns.json    # Per-modal cooldown tracking
+├── cooldowns.json    # Per-model cooldown tracking
 ├── runs/<run-id>/    # Per-run logs and artifacts
-│   ├── <modal>.log   # Stdout/stderr from modal invocations
+│   ├── <model>.log   # Stdout/stderr from model invocations
 │   └── verifier.log  # Verifier output
 └── changelog/
-    └── <modal>.md    # Per-modal iteration logs (required)
+    └── <model>.md    # Per-model iteration logs (required)
 ```
 
 **Config schema** (`config.json`):
 ```json
 {
-  "modal_priority": ["claude", "codex", "gemini"],
-  "modal_selection": "round_robin",
+  "model_priority": ["claude", "codex", "gemini"],
+  "model_selection": "round_robin",
   "required_verifiers": ["tests"],
   "completion_promise": "COMPLETE",
-  "modals": [
+  "models": [
     {
       "name": "claude",
       "command_argv": ["claude", "-p", "--output-format", "text", "--dangerously-skip-permissions"],
@@ -59,7 +59,7 @@ Implement `.ralf/` runtime directory structure in `ralf-engine`:
 }
 ```
 
-### 2. Modal Discovery
+### 2. Model Discovery
 
 Implement `ralf doctor` command in `ralf-engine`:
 
@@ -70,59 +70,59 @@ Implement `ralf doctor` command in `ralf-engine`:
 
 Implement `ralf init` command:
 - Create `.ralf/` directory structure
-- Generate default `config.json` with only detected modals
+- Generate default `config.json` with only detected models
 - Use sensible defaults from SPEC.md
 
 Implement `ralf probe` command:
-- Run each modal with a simple test prompt and timeout
+- Run each model with a simple test prompt and timeout
 - Detect hangs (auth prompts, OAuth flows)
 - Report results with actionable guidance
 
-### 3. Modal Invocation
+### 3. Model Invocation
 
-Implement modal execution in `ralf-engine`:
+Implement model execution in `ralf-engine`:
 
-- One-shot prompt execution (pass prompt via stdin or argument per modal config)
-- Configurable timeout per modal
-- Capture stdout/stderr to `.ralf/runs/<run-id>/<modal>.log`
+- One-shot prompt execution (pass prompt via stdin or argument per model config)
+- Configurable timeout per model
+- Capture stdout/stderr to `.ralf/runs/<run-id>/<model>.log`
 - Return structured result (exit code, output, duration, rate_limit_detected)
 
 ### 4. Rate-Limit Detection & Cooldown
 
-- Pattern-based detection using configurable regex patterns per modal
+- Pattern-based detection using configurable regex patterns per model
 - When detected:
   - Write cooldown entry to `cooldowns.json`
-  - Skip modal in subsequent iterations until cooldown expires
-- When all modals cooling: sleep until earliest expires (clamped to reasonable max)
+  - Skip model in subsequent iterations until cooldown expires
+- When all models cooling: sleep until earliest expires (clamped to reasonable max)
 
-### 5. Modal Selection Strategies
+### 5. Model Selection Strategies
 
 Implement in `ralf-engine`:
 
-- `round_robin` (default): Rotate through available modals, skip those in cooldown
-- `priority`: Use first non-cooldown modal from priority list
+- `round_robin` (default): Rotate through available models, skip those in cooldown
+- `priority`: Use first non-cooldown model from priority list
 
 ### 6. Verification System
 
 - Configurable verifiers (command + timeout)
 - Default required verifier: `tests`
-- Run verifiers after modal iteration
+- Run verifiers after model iteration
 - Capture output to `.ralf/runs/<run-id>/verifier.log`
 
 ### 7. Completion Policy
 
 Loop completes only when ALL conditions are met:
 - All required verifiers pass (exit code 0)
-- Modal output contains exact `<promise>COMPLETION_TEXT</promise>` (default: `COMPLETE`)
+- Model output contains exact `<promise>COMPLETION_TEXT</promise>` (default: `COMPLETE`)
 
 ### 8. Changelog Generation
 
-After each iteration, append entry to `.ralf/changelog/<modal>.md`:
+After each iteration, append entry to `.ralf/changelog/<model>.md`:
 
 ```markdown
 ## Run <run_id> — Iteration <n>
 
-- **Modal**: claude
+- **Model**: claude
 - **Status**: success | rate_limited | timeout | error
 - **Reason**: <why this status>
 - **Prompt hash**: <sha256 of prompt>
@@ -138,11 +138,11 @@ After each iteration, append entry to `.ralf/changelog/<modal>.md`:
 
 Implement `ralf run` command:
 
-- Accept options: `--max-iterations`, `--max-seconds`, `--branch`, `--modals`
+- Accept options: `--max-iterations`, `--max-seconds`, `--branch`, `--models`
 - Read `PROMPT.md` from repo root as the stable prompt
 - Execute iteration pipeline:
-  1. Select modal (per strategy, skip cooldowns)
-  2. Invoke modal with prompt
+  1. Select model (per strategy, skip cooldowns)
+  2. Invoke model with prompt
   3. Check for rate-limit patterns
   4. Run verifiers
   5. Check completion (verifiers pass + promise tag)
@@ -160,9 +160,9 @@ Implement `ralf cancel` command:
 
 ## Testing Strategy
 
-**Critical**: All tests must use stub/mock modals. Do NOT call real provider CLIs in tests.
+**Critical**: All tests must use stub/mock models. Do NOT call real provider CLIs in tests.
 
-### Stub Modals
+### Stub Models
 
 Create test fixtures (shell scripts or Rust test binaries) that simulate:
 - Success with promise tag
@@ -174,14 +174,14 @@ Create test fixtures (shell scripts or Rust test binaries) that simulate:
 ### Unit Tests
 
 - Config parsing and validation
-- Modal selection algorithms
+- Model selection algorithms
 - Rate-limit pattern matching
 - Promise tag extraction
 - Changelog formatting
 
 ### Integration Tests
 
-- Full iteration cycle with stub modal
+- Full iteration cycle with stub model
 - Cooldown written when rate limit detected
 - Changelog entry appended with required fields
 - Completion requires verifiers pass AND promise present
@@ -189,10 +189,10 @@ Create test fixtures (shell scripts or Rust test binaries) that simulate:
 
 ## Acceptance Criteria
 
-1. **`ralf doctor --json`** returns discovered modals with availability status
+1. **`ralf doctor --json`** returns discovered models with availability status
 2. **`ralf init`** creates `.ralf/` with valid `config.json`
-3. **`ralf run`** executes loop against stub modals in tests
-4. **Cooldowns work**: rate-limit detection triggers cooldown, modal is skipped
+3. **`ralf run`** executes loop against stub models in tests
+4. **Cooldowns work**: rate-limit detection triggers cooldown, model is skipped
 5. **Changelogs work**: each iteration appends entry with required fields
 6. **Completion works**: loop exits only when verifiers pass AND promise found
 7. **All tests pass**: `cargo test --workspace --locked`

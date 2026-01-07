@@ -1,11 +1,11 @@
-# ralf — Specification (Standalone Multi-Modal TUI + Loop Engine)
+# ralf — Specification (Standalone Multi-Model TUI + Loop Engine)
 
 ## Summary
 
 `ralf` is a standalone CLI + TUI that provides a **phased, assistant-like experience**:
 
-1) **Spec / Prompt phase (“Spec Studio”)**: interactive multi-modal dialog to converge on a high-quality spec and a stable `PROMPT.md` with explicit completion criteria.
-2) **Run phase (“Loop Runner”)**: an autonomous multi-modal loop that iterates on the working tree until programmatic verification passes and the completion promise is produced.
+1) **Spec / Prompt phase (“Spec Studio”)**: interactive multi-model dialog to converge on a high-quality spec and a stable `PROMPT.md` with explicit completion criteria.
+2) **Run phase (“Loop Runner”)**: an autonomous multi-model loop that iterates on the working tree until programmatic verification passes and the completion promise is produced.
 
 `ralf` uses **installed model CLIs** (Claude, Codex, Gemini) and does **not** require users to obtain API keys.
 
@@ -17,7 +17,7 @@ Key principles:
 - **Stable prompt; mutable world**: the prompt is stable; progress is changes in the repo.
 - **Programmatic completion**: “done” must be checkable (tests/build/lint) plus an explicit completion promise tag.
 - **Safety**: budgets, backoff, cooldowns, and circuit breakers prevent runaway loops.
-- **Auditability**: persistent logs, diffs, and changelogs per modal.
+- **Auditability**: persistent logs, diffs, and changelogs per model.
 
 ## Goals
 
@@ -26,8 +26,8 @@ Key principles:
   - a Run Dashboard,
   - clear progress and strong safety affordances.
 - Provide a robust loop engine:
-  - multi-modal (Claude/Codex/Gemini) by default,
-  - per-modal rate-limit detection + cooldown,
+  - multi-model (Claude/Codex/Gemini) by default,
+  - per-model rate-limit detection + cooldown,
   - best practices each iteration (git, tests, docs, changelogs).
 - Be a high-quality **open source** repository:
   - strong project structure, docs, CI, releases,
@@ -52,7 +52,7 @@ ralf
 
 `ralf` immediately:
 - detects if this is a git repo (warns if not),
-- detects which modals are runnable (`claude`, `codex`, `gemini`),
+- detects which models are runnable (`claude`, `codex`, `gemini`),
 - offers guided setup (auto-config) and remembers choices under `.ralf/`.
 
 ### Default experience: one command, everything inside the UI
@@ -68,15 +68,15 @@ The primary user journey should require **one terminal**:
 
 **Phase A: Spec Studio**
 - A chat-like interface that lets the user:
-  - discuss requirements with one or more modals,
+  - discuss requirements with one or more models,
   - draft/iterate a spec and acceptance criteria,
-  - run multi-modal “review rounds”,
+  - run multi-model “review rounds”,
   - finalize `PROMPT.md` (the stable loop prompt).
 
 **Phase B: Loop Runner**
 - A dashboard that runs the autonomous loop with:
   - live iteration logs,
-  - per-modal outputs,
+  - per-model outputs,
   - cooldown/rate-limit visibility,
   - verifier results (tests, etc.),
   - git status/diff summaries,
@@ -94,12 +94,12 @@ The UI should:
 
 ### Uses CLIs, not APIs
 
-- The engine must invoke local CLIs for modals (no SDKs / keys required by default).
-- It must support one-shot operation per modal, driven by stdin or an argument.
+- The engine must invoke local CLIs for models (no SDKs / keys required by default).
+- It must support one-shot operation per model, driven by stdin or an argument.
 
-### Multi-modal by default (unless user restricts)
+### Multi-model by default (unless user restricts)
 
-- By default, `ralf` uses **all detected modals** (`claude`, `codex`, `gemini`) during a run.
+- By default, `ralf` uses **all detected models** (`claude`, `codex`, `gemini`) during a run.
 - Users can restrict to a subset for a run or for a project via config/UI.
 
 ### Default completion policy: tests + promise tag
@@ -113,25 +113,25 @@ The loop completes only when:
 Default behavior is a **shared working tree** (no worktrees), with:
 - optional `--branch <name>` (or UI toggle) to isolate changes on a branch.
 
-### Per-modal changelog required
+### Per-model changelog required
 
 Each iteration appends an entry to:
-- `.ralf/changelog/<modal>.md` (required per modal)
+- `.ralf/changelog/<model>.md` (required per model)
 - `.ralf/changelog/global.md` (optional rollup)
 
 Changelog entries must include:
-- run_id, iteration, modal name, status, reason,
+- run_id, iteration, model name, status, reason,
 - prompt hash,
 - git branch + dirty + changed files summary,
 - verifier results + links to logs.
 
-### Rate-limit detection per modal
+### Rate-limit detection per model
 
-- Each modal has a set of patterns to detect rate-limits / caps.
-- When detected: modal enters cooldown and is skipped until cooldown expires.
+- Each model has a set of patterns to detect rate-limits / caps.
+- When detected: model enters cooldown and is skipped until cooldown expires.
 - Cooldown metadata is persisted.
 
-## Supported modals (v0)
+## Supported models (v0)
 
 Required:
 - `claude` (Anthropic CLI)
@@ -139,7 +139,7 @@ Required:
 - `gemini` (Google Gemini CLI)
 
 Optional later (not required):
-- additional modals can be added via config, but no first-class UX is required initially.
+- additional models can be added via config, but no first-class UX is required initially.
 
 ### Default safe invocations
 
@@ -154,7 +154,7 @@ Users indicated “run outside sandbox” flags are desired:
 
 ### One executable, two layers
 
-- **Engine**: loop orchestration, config/state, modal adapters, cooldowns, verification, changelogs.
+- **Engine**: loop orchestration, config/state, model adapters, cooldowns, verification, changelogs.
 - **TUI**: Spec Studio + Run Dashboard, built on top of engine APIs.
 
 ### Recommended implementation language
@@ -177,10 +177,10 @@ Proposed commands:
 
 - `ralf` (default): opens the TUI
 - `ralf tui`: opens the TUI (explicit)
-- `ralf doctor [--json]`: detects modals, prints diagnostics
+- `ralf doctor [--json]`: detects models, prints diagnostics
 - `ralf init [--profile NAME]`: writes `.ralf/config.json` and `.ralf/` scaffolding in the current repo
-- `ralf probe [--json] [--modal NAME]`: one-shot probe per modal with timeout to detect auth prompts/hangs
-- `ralf run [--max-iterations N] [--max-seconds N] [--branch NAME] [--modals a,b,c]`: runs the autonomous loop
+- `ralf probe [--json] [--model NAME]`: one-shot probe per model with timeout to detect auth prompts/hangs
+- `ralf run [--max-iterations N] [--max-seconds N] [--branch NAME] [--models a,b,c]`: runs the autonomous loop
 - `ralf status [--json]`: prints state + cooldowns
 - `ralf cancel`: cancels the current run (best-effort) and writes state
 
@@ -195,14 +195,14 @@ Required layout:
 - `docs/`
   - `ROADMAP.md`
   - `TROUBLESHOOTING.md`
-  - `MODALS.md`
+  - `MODELS.md`
   - `CONFIG.md`
 - `install/`
   - `install.sh` (curl|bash)
   - `uninstall.sh`
 - `.github/workflows/ci.yml`
 - `LICENSE`, `README.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`
-- `CHANGELOG.md` (project release notes; distinct from per-modal run changelogs)
+- `CHANGELOG.md` (project release notes; distinct from per-model run changelogs)
 
 Runtime layout inside a user repo:
 
@@ -211,7 +211,7 @@ Runtime layout inside a user repo:
   - `state.json`
   - `cooldowns.json`
   - `runs/<run-id>/...` (logs/artifacts)
-  - `changelog/<modal>.md` (required)
+  - `changelog/<model>.md` (required)
   - `changelog/global.md` (optional)
   - `spec/` (spec studio transcripts, drafts)
 
@@ -223,12 +223,12 @@ Config is JSON for stable parsing and easy portability.
 
 ```json
 {
-  "modal_priority": ["claude", "codex", "gemini"],
-  "modal_selection": "round_robin",
+  "model_priority": ["claude", "codex", "gemini"],
+  "model_selection": "round_robin",
   "required_verifiers": ["tests"],
   "completion_promise": "COMPLETE",
   "checkpoint_commits": false,
-  "modals": [
+  "models": [
     {
       "name": "claude",
       "prompt_mode": "stdin",
@@ -243,10 +243,10 @@ Config is JSON for stable parsing and easy portability.
 }
 ```
 
-### Modal selection strategies
+### Model selection strategies
 
-- `priority`: pick first non-cooldown modal each iteration (simple fallback).
-- `round_robin` (recommended default): rotate across available modals, skipping cooldowns.
+- `priority`: pick first non-cooldown model each iteration (simple fallback).
+- `round_robin` (recommended default): rotate across available models, skipping cooldowns.
 - Future: `roles` (builder/reviewer/doc/tester).
 
 ## Engine behavior
@@ -259,17 +259,17 @@ Each iteration performs:
    - verify git repo and working tree policy,
    - load config/state/cooldowns,
    - ensure run directory exists.
-2) Modal selection:
-   - choose next modal (round robin by default),
-   - skip cooldown modals.
+2) Model selection:
+   - choose next model (round robin by default),
+   - skip cooldown models.
 3) Context assembly:
    - stable prompt text (`PROMPT.md`),
    - lightweight context bundle (recent diffs, last verifier failures) bounded by size.
-4) Modal invocation:
+4) Model invocation:
    - run CLI with timeout,
-   - capture stdout/stderr to `.ralf/runs/<run-id>/<modal>.log`.
+   - capture stdout/stderr to `.ralf/runs/<run-id>/<model>.log`.
 5) Rate-limit detection:
-   - if matched, write cooldown and mark iteration as rate-limited for that modal.
+   - if matched, write cooldown and mark iteration as rate-limited for that model.
 6) Git bookkeeping:
    - snapshot `git status --porcelain`,
    - diffstat, changed files list.
@@ -280,7 +280,7 @@ Each iteration performs:
 8) Completion evaluation:
    - done only when required verifiers pass and promise matches.
 9) Changelog + state update:
-   - append per-modal changelog entry,
+   - append per-model changelog entry,
    - update `.ralf/state.json`.
 
 ### Rate-limits & cooldowns
@@ -293,7 +293,7 @@ Cooldowns persisted as:
 }
 ```
 
-When all modals are cooling down:
+When all models are cooling down:
 - sleep until the earliest cooldown expires, clamped (e.g. 60s),
 - show an explicit UI status.
 
@@ -302,18 +302,18 @@ When all modals are cooling down:
 Required:
 - always capture git status + diff summary,
 - always run verifiers per config policy,
-- always write changelog entries (per modal),
+- always write changelog entries (per model),
 - always persist artifacts under `.ralf/`.
 
 Optional (config):
-- checkpoint commits after each iteration (message: `ralf(<modal>): iter <n> (run <run_id>)`).
+- checkpoint commits after each iteration (message: `ralf(<model>): iter <n> (run <run_id>)`).
 
 ## TUI specification
 
 ### Overall UI principles
 
 - **Guided**: always show “what’s next”.
-- **Transparent**: show what it is doing and why (selected modal, cooldown reasons).
+- **Transparent**: show what it is doing and why (selected model, cooldown reasons).
 - **Interruptible**: pause/cancel prominently.
 - **Artifact-first**: always link to logs/diffs/verifier outputs.
 
@@ -327,7 +327,7 @@ Purpose: confirm where we are, what is available, and what `ralf` will do next.
 
 Displayed:
 - repo path and git status (repo detected / not detected)
-- detected modals (`claude`, `codex`, `gemini`) with status: available / missing / runnable / needs attention
+- detected models (`claude`, `codex`, `gemini`) with status: available / missing / runnable / needs attention
 - primary call-to-action button: `Continue setup` (if not configured) or `Open Spec Studio` (if configured)
 
 Wireframe (conceptual):
@@ -335,7 +335,7 @@ Wireframe (conceptual):
 ```
 ┌ ralf ───────────────────────────────────────────────────────────────┐
 │ Repo: /path/to/repo   Git: OK (branch main, clean)                  │
-│ Modals:  claude ✅   codex ✅   gemini ⚠ (oauth prompt risk)         │
+│ Models:  claude ✅   codex ✅   gemini ⚠ (oauth prompt risk)         │
 │                                                                      │
 │ Next: Setup → Spec Studio → Run Loop                                │
 │                                                                      │
@@ -352,23 +352,23 @@ Transitions:
 Purpose: generate a working config without sending the user to other tools/windows.
 
 Steps:
-1) Detect available modals (PATH + `--help` call).
+1) Detect available models (PATH + `--help` call).
 2) Choose selection mode (default: `round_robin`).
 3) Confirm verifier defaults (default: `tests`).
-4) Run `probe` per modal (with timeout) and show results.
-5) If a modal needs intervention, show a guided fix (or “skip this modal”).
+4) Run `probe` per model (with timeout) and show results.
+5) If a model needs intervention, show a guided fix (or “skip this model”).
 6) Save `.ralf/config.json` and initialize `.ralf/` directories.
 
 Fixes must be explicit and safe:
 - Gemini macOS Keychain prompt: show explanation and a “Pin gemini+node path” toggle.
-- Missing modal: show install hint and allow proceeding without it.
-- Hang/timeout: allow increasing timeout or disabling that modal.
+- Missing model: show install hint and allow proceeding without it.
+- Hang/timeout: allow increasing timeout or disabling that model.
 
 Wireframe:
 
 ```
 ┌ Setup ──────────────────────────────────────────────────────────────┐
-│ Detected modals                                                     │
+│ Detected models                                                     │
 │  ✅ claude     ✅ codex     ⚠ gemini (may prompt Keychain)           │
 │                                                                      │
 │ Run mode:  (•) round_robin   ( ) priority                            │
@@ -394,7 +394,7 @@ Key design: this should feel like Claude/Codex chat:
 
 Conversation model:
 - Each user message and model response is appended to `.ralf/spec/threads/<thread-id>.jsonl`.
-- The prompt passed to each modal is synthesized from:
+- The prompt passed to each model is synthesized from:
   - system instructions (stable),
   - the ongoing transcript (bounded),
   - the current draft spec/prompt (bounded),
@@ -417,12 +417,12 @@ Wireframe:
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Screen 3: Review Round (multi-modal spec review)
+#### Screen 3: Review Round (multi-model spec review)
 
 Purpose: “have the other models review the spec” until it is final.
 
 Behavior:
-- For each non-selected modal, run a one-shot “spec review” prompt that returns structured feedback (prefer JSON, fall back to text parsing).
+- For each non-selected model, run a one-shot “spec review” prompt that returns structured feedback (prefer JSON, fall back to text parsing).
 - Present feedback as a checklist with severity (blocker/warn/nice-to-have).
 - Provide “Apply” actions that either:
   - update the Draft (structured fields), or
@@ -461,26 +461,26 @@ Finalize writes:
 Purpose: run and monitor the loop, with rich observability.
 
 Must show:
-- iteration, selected modal, status
+- iteration, selected model, status
 - cooldowns and reasons
 - verifier results with drill-down logs
 - git diffstat and changed file list
-- current modal output stream (if available)
+- current model output stream (if available)
 
 Wireframe:
 
 ```
 ┌ Run ────────────────────────────────────────────────────────────────┐
-│ run_id=…  iter=3  modal=codex  status=running  elapsed=00:12:03      │
+│ run_id=…  iter=3  model=codex  status=running  elapsed=00:12:03      │
 │ Cooldowns: gemini 320s (rate limit)                                  │
 │                                                                      │
-│ Tabs: [Timeline] [Modal Output] [Verifiers] [Git] [Changelog]        │
+│ Tabs: [Timeline] [Model Output] [Verifiers] [Git] [Changelog]        │
 │                                                                      │
 │ Timeline                                                            │
-│  - iter 3 start (modal=codex)                                        │
+│  - iter 3 start (model=codex)                                        │
 │  - verifier tests: exit=1                                            │
 │                                                                      │
-│ Controls: [Pause] [Cancel] [Skip modal] [Open diff]                  │
+│ Controls: [Pause] [Cancel] [Skip model] [Open diff]                  │
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -492,7 +492,7 @@ Displayed:
 - completion status (promise + verifiers ok)
 - link to `.ralf/runs/<run-id>/`
 - git diff summary and branch name
-- per-modal changelog links
+- per-model changelog links
 - suggested next actions: “open PR”, “run full test suite”, “start new spec thread”
 
 ### Spec Studio (Phase A)
@@ -501,13 +501,13 @@ Primary UI elements:
 - Left: “Chat” transcript (multi-turn).
 - Right: “Spec Draft” viewer/editor (structured sections).
 - Bottom: input box with:
-  - model selector (available modals),
+  - model selector (available models),
   - “Send”, “Review round”, “Finalize prompt”.
 
 Key behaviors:
 - Maintains conversation transcript in `.ralf/spec/threads/<id>.jsonl`.
-- Allows switching the active modal mid-conversation.
-- “Review round” runs a one-shot review prompt through *other available modals* and summarizes:
+- Allows switching the active model mid-conversation.
+- “Review round” runs a one-shot review prompt through *other available models* and summarizes:
   - missing acceptance criteria,
   - missing verifiers,
   - ambiguous requirements,
@@ -524,10 +524,10 @@ Prompt format requirements (final):
 ### Loop Runner (Phase B)
 
 Primary UI elements:
-- Top bar: run_id, elapsed time, iteration, current modal, status.
+- Top bar: run_id, elapsed time, iteration, current model, status.
 - Tabs:
   - Timeline (events),
-  - Modal output (per modal),
+  - Model output (per model),
   - Verifiers (exit codes + logs),
   - Git (diffstat + file list),
   - Changelog preview.
@@ -536,7 +536,7 @@ Controls:
 - Start run: choose branch, max iterations, promise text, selection mode.
 - Pause/resume (future if implemented via process control).
 - Cancel (writes cancel state and stops processes).
-- “Skip modal” / “cooldown modal” (manual override).
+- “Skip model” / “cooldown model” (manual override).
 
 ### Beautiful UI requirement
 
@@ -546,13 +546,13 @@ The final UI should be comparable in polish to mainstream terminal TUIs:
 - smooth updates (no flicker),
 - clear error surfaces (auth prompt, timeout, missing CLI).
 
-## Modal detection and setup
+## Model detection and setup
 
 On startup in a repo:
-- detect installed modals by checking PATH for `claude`, `codex`, `gemini`,
+- detect installed models by checking PATH for `claude`, `codex`, `gemini`,
 - run a fast `--help` check to confirm the binary is callable,
 - offer to write `.ralf/config.json` from presets:
-  - include only available modals by default,
+  - include only available models by default,
   - default to `round_robin` selection.
 
 Gemini macOS OAuth prompt mitigation:
@@ -581,8 +581,8 @@ Gemini macOS OAuth prompt mitigation:
 ## Testing & CI (requirements)
 
 CI must run:
-- unit tests for config/state parsing and modal selection logic,
-- integration tests that stub modal CLIs (fixtures) and verify changelog/state outputs,
+- unit tests for config/state parsing and model selection logic,
+- integration tests that stub model CLIs (fixtures) and verify changelog/state outputs,
 - lint/format (Rustfmt/Clippy).
 
 The project must not require real provider access in CI.
@@ -590,11 +590,11 @@ The project must not require real provider access in CI.
 ## Roadmap (high level)
 
 v0.1:
-- Loop engine with round-robin multi-modal, cooldowns, tests+promise completion, changelogs.
+- Loop engine with round-robin multi-model, cooldowns, tests+promise completion, changelogs.
 - Spec Studio MVP: chat transcript + finalize PROMPT.md (no fancy review synthesis required).
 - Run Dashboard MVP with logs/verifiers/git panels.
 
 v0.2:
-- Multi-modal review rounds in Spec Studio + merge tooling.
+- Multi-model review rounds in Spec Studio + merge tooling.
 - Circuit breakers (no-diff repeats, repeated verifier failures).
 - Role pipeline mode (optional).

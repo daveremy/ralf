@@ -21,45 +21,45 @@ Implement the headless engine (can be used by both CLI and TUI):
   - `.ralf/state.json`
   - `.ralf/cooldowns.json`
   - `.ralf/runs/<run-id>/...` logs/artifacts
-  - `.ralf/changelog/<modal>.md` (per modal, required)
-- Modal discovery for `claude|codex|gemini`:
+  - `.ralf/changelog/<model>.md` (per model, required)
+- Model discovery for `claude|codex|gemini`:
   - detect binaries on PATH
   - validate callable (e.g. `--help`)
-  - generate default config including only detected modals
-- Modal invocation:
+  - generate default config including only detected models
+- Model invocation:
   - one-shot prompt execution (stdin or final arg)
   - timeouts
   - capture stdout/stderr to run logs
 - Rate-limit detection + cooldown:
   - pattern-based detection
   - persist cooldown_until/reason/observed_at
-  - skip cooled down modals
-- Modal selection:
+  - skip cooled down models
+- Model selection:
   - implement `round_robin` and `priority` strategies (default: `round_robin`)
 - Verification:
   - configurable verifiers (default required: `tests`)
   - completion requires required verifiers pass AND exact `<promise>…</promise>` match (default: `COMPLETE`)
 - Changelogs:
-  - append per-iteration entries to `.ralf/changelog/<modal>.md`
-  - include run_id/iter/modal/status/reason/prompt_hash/git summary/verifier results/log paths
+  - append per-iteration entries to `.ralf/changelog/<model>.md`
+  - include run_id/iter/model/status/reason/prompt_hash/git summary/verifier results/log paths
 
-Important: CI tests must use stub modal binaries/fixtures. Do not call real provider CLIs in CI.
+Important: CI tests must use stub model binaries/fixtures. Do not call real provider CLIs in CI.
 
 ### 3) TUI (beautiful MVP shell)
 
 Implement a first usable TUI (Rust + ratatui recommended):
 - Welcome/Setup screen:
-  - detect repo/modals
+  - detect repo/models
   - generate/save `.ralf/config.json`
   - run probes with timeouts and show actionable results
 - Spec Studio MVP:
   - chat transcript + draft prompt pane
-  - model selector (use only available modals)
+  - model selector (use only available models)
   - “Finalize” writes `PROMPT.md` and transitions to Run Dashboard
 - Run Dashboard MVP:
   - start/cancel run
-  - show iteration, selected modal, cooldowns
-  - show modal output tail, verifier results, git diff summary
+  - show iteration, selected model, cooldowns
+  - show model output tail, verifier results, git diff summary
 
 Do not implement “Review Round” UI yet unless it is quick and clean.
 
@@ -72,7 +72,7 @@ Do not implement “Review Round” UI yet unless it is quick and clean.
   - create/edit a prompt in Spec Studio,
   - start a bounded run,
   - show progress and artifacts.
-- Headless engine passes automated tests (unit + integration with stub modals).
+- Headless engine passes automated tests (unit + integration with stub models).
 - Installer works per `install/INSTALL_SPEC.md`.
 - Output exactly: <promise>COMPLETE</promise>
 

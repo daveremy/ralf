@@ -1,12 +1,12 @@
 # ralf
 
-Multi-modal "Ralph Wiggum" autonomous loops with a first-class TUI.
+Multi-model "Ralph Wiggum" autonomous loops with a first-class TUI.
 
 ralf is a standalone CLI + TUI that orchestrates multiple AI model CLIs (Claude, Codex, Gemini) in an autonomous loop until your task is verifiably complete.
 
 ## Features
 
-- **Multi-modal by default**: Uses all available model CLIs with round-robin selection
+- **Multi-model by default**: Uses all available model CLIs with round-robin selection
 - **No API keys required**: Works with locally installed model CLIs
 - **Two-phase workflow**:
   - **Spec Studio**: Interactive chat-based spec refinement
@@ -43,7 +43,7 @@ cargo install --path crates/ralf-cli
 # Open the TUI (default)
 ralf
 
-# Check available modals
+# Check available models
 ralf doctor
 
 # Initialize ralf in current repo
@@ -59,9 +59,9 @@ ralf run --max-iterations 50
 |-----------|--------------------------------------------------|
 | `ralf`    | Open the TUI (default)                          |
 | `tui`     | Open the TUI (explicit)                         |
-| `doctor`  | Detect modals and print diagnostics             |
+| `doctor`  | Detect models and print diagnostics             |
 | `init`    | Initialize `.ralf/` directory and config        |
-| `probe`   | Probe modals with timeout                       |
+| `probe`   | Probe models with timeout                       |
 | `run`     | Run the autonomous loop                         |
 | `status`  | Print current state and cooldowns               |
 | `cancel`  | Cancel the current run                          |
@@ -71,7 +71,7 @@ ralf run --max-iterations 50
 - [Specification](SPEC.md)
 - [Roadmap](docs/ROADMAP.md)
 - [Developer Roadmap](docs/DEV_ROADMAP.md)
-- [Modal Configuration](docs/MODALS.md)
+- [Model Configuration](docs/MODELS.md)
 - [Configuration Reference](docs/CONFIG.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 

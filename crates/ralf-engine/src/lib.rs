@@ -1,8 +1,8 @@
-//! ralf-engine: Headless engine for multi-modal autonomous loops
+//! ralf-engine: Headless engine for multi-model autonomous loops
 //!
 //! This crate provides the core orchestration logic for ralf, including:
 //! - Configuration and state management
-//! - Modal adapters for CLI process execution
+//! - Model adapters for CLI process execution
 //! - Rate-limit detection and cooldown management
 //! - Verification runners
 //! - Changelog generation

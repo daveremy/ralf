@@ -1,4 +1,4 @@
-//! ralf-tui: Terminal UI for multi-modal autonomous loops
+//! ralf-tui: Terminal UI for multi-model autonomous loops
 //!
 //! This crate provides the TUI layer for ralf, including:
 //! - Spec Studio screens for spec drafting

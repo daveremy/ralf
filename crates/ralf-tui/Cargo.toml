@@ -1,6 +1,6 @@
 [package]
 name = "ralf-tui"
-description = "Terminal UI for ralf multi-modal autonomous loop"
+description = "Terminal UI for ralf multi-model autonomous loop"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

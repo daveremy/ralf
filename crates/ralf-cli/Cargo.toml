@@ -1,6 +1,6 @@
 [package]
 name = "ralf-cli"
-description = "CLI for ralf multi-modal autonomous loop"
+description = "CLI for ralf multi-model autonomous loop"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

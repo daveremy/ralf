@@ -6,7 +6,7 @@ This is a planning doc to make the repo easy to navigate once implementation beg
 
 - `crates/ralf-engine/`
   - config, state, cooldowns
-  - modal adapters (CLI process execution, timeouts)
+  - model adapters (CLI process execution, timeouts)
   - verification runners
   - changelog writer
 - `crates/ralf-tui/`

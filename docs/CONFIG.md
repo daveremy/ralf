@@ -4,7 +4,7 @@ Runtime config lives at `.ralf/config.json` in the target repo you’re operatin
 
 Key ideas:
 - model selection is configuration (command argv), not code
-- multi-modal selection defaults to round-robin across available modals
+- multi-model selection defaults to round-robin across available models
 - completion defaults to “tests + `<promise>…</promise>`”
 
 See `SPEC.md` for the draft schema.

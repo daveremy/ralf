@@ -1,6 +1,6 @@
 # Developer roadmap (implementation plan)
 
-This roadmap is a **build plan**, not a user-facing feature list. It is structured to ship a usable, polished “assistant-like” multi-modal TUI while keeping the loop engine correct, testable, and auditable.
+This roadmap is a **build plan**, not a user-facing feature list. It is structured to ship a usable, polished “assistant-like” multi-model TUI while keeping the loop engine correct, testable, and auditable.
 
 ## Key decisions (recommended)
 
@@ -8,7 +8,7 @@ This roadmap is a **build plan**, not a user-facing feature list. It is structur
 
 - **Rust** for the shipped binary.
 - **ratatui + crossterm** for the TUI.
-- Use local model CLIs for all modal calls (no API keys).
+- Use local model CLIs for all model calls (no API keys).
 
 Rationale:
 - Single self-contained binary per platform is the best install story.
@@ -17,7 +17,7 @@ Rationale:
 
 ### Default run strategy
 
-- Default modal selection: `round_robin` across all detected modals (skip cooldowns).
+- Default model selection: `round_robin` across all detected models (skip cooldowns).
 - Completion: required verifiers pass **and** exact `<promise>…</promise>`.
 
 ## Milestones
@@ -43,21 +43,21 @@ DoD:
 
 Deliverables:
 - Config/state storage under `.ralf/`:
-  - `config.json`, `state.json`, `cooldowns.json`, `runs/<run-id>/…`, `changelog/<modal>.md`.
-- Modal discovery:
+  - `config.json`, `state.json`, `cooldowns.json`, `runs/<run-id>/…`, `changelog/<model>.md`.
+- Model discovery:
   - detect `claude|codex|gemini` on PATH,
   - validate they are callable (`--help`),
-  - write a default config containing only detected modals.
+  - write a default config containing only detected models.
 - Loop runner (headless):
   - iteration loop,
   - rate-limit detection + cooldown,
   - verifiers (at least `tests`),
   - completion policy (tests + promise tag),
-  - per-modal changelog entries.
+  - per-model changelog entries.
 
 DoD:
-- `ralf doctor --json` returns discovered modals.
-- `ralf run` works against fixture “stub modals” in tests (no real CLIs).
+- `ralf doctor --json` returns discovered models.
+- `ralf run` works against fixture “stub models” in tests (no real CLIs).
 - Integration tests validate:
   - cooldown is written,
   - changelog entry is appended,
@@ -73,10 +73,10 @@ Deliverables:
   - non-blocking event loop,
   - log viewer component (tail + scroll).
 - “Welcome / Setup” screens implemented, wired to engine:
-  - detect repo + modals,
+  - detect repo + models,
   - generate config,
   - run `probe` with timeouts,
-  - show actionable fixes and allow disabling a modal.
+  - show actionable fixes and allow disabling a model.
 
 DoD:
 - Running `ralf` opens the TUI and completes setup in one terminal.
@@ -93,8 +93,8 @@ Deliverables:
 - Thread persistence:
   - `.ralf/spec/threads/<id>.jsonl`
   - `.ralf/spec/drafts/<timestamp>.md`
-- One-shot modal invocation for chat turns:
-  - pass bounded transcript + draft to the modal,
+- One-shot model invocation for chat turns:
+  - pass bounded transcript + draft to the model,
   - stream output when CLI supports it (best-effort),
   - record artifacts.
 - Finalize writes `PROMPT.md` and transitions to Run Dashboard.
@@ -107,12 +107,12 @@ DoD:
 
 Deliverables:
 - Run Dashboard screen:
-  - run_id, iteration, selected modal, elapsed time,
+  - run_id, iteration, selected model, elapsed time,
   - cooldowns,
   - timeline events,
-  - tabs: modal output, verifiers, git summary, changelog preview.
+  - tabs: model output, verifiers, git summary, changelog preview.
 - Run control:
-  - start run with settings (branch, max iterations/seconds, modal subset),
+  - start run with settings (branch, max iterations/seconds, model subset),
   - cancel run.
 - Robust process control:
   - timeouts,
@@ -121,13 +121,13 @@ Deliverables:
 
 DoD:
 - A run can be started and canceled from the TUI.
-- TUI remains responsive during modal execution and verifier runs.
+- TUI remains responsive during model execution and verifier runs.
 
 ### Milestone 5 — Review rounds + spec hardening
 
 Deliverables:
 - Review Round screen:
-  - run “spec review” prompts through other available modals,
+  - run “spec review” prompts through other available models,
   - present findings as structured checklist,
   - apply changes into the draft prompt/spec.
 - Improve completion hygiene:
@@ -149,18 +149,18 @@ Deliverables:
 
 DoD:
 - `curl | bash` installs a pinned version and `ralf --version` works.
-- “First run experience” is smooth for users with at least one modal installed.
+- “First run experience” is smooth for users with at least one model installed.
 
 ## Test strategy
 
 ### Unit tests
 - JSON config schema parsing/validation.
-- Modal selection algorithms (round robin, priority).
+- Model selection algorithms (round robin, priority).
 - Rate-limit detection regex matching.
 - Promise extraction.
 
 ### Integration tests (no real providers)
-- Stub modal scripts/binaries that:
+- Stub model scripts/binaries that:
   - output a promise,
   - output a rate limit string,
   - hang (to test timeouts),

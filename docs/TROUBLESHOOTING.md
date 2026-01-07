@@ -8,5 +8,5 @@ If you use Gemini OAuth login, macOS may prompt to allow `node` to access a Keyc
 
 ## CLI hangs / no output
 
-Set a per-modal timeout and run `probe` from Spec Studio/Setup to detect interactive prompts.
+Set a per-model timeout and run `probe` from Spec Studio/Setup to detect interactive prompts.
 

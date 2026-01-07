@@ -12,7 +12,7 @@ Set up `ralf` as a production-ready Rust workspace with CI, testing infrastructu
 
 ## Context
 
-`ralf` is a multi-modal autonomous loop engine with a TUI. This prompt focuses on **Milestone 0: Repo Bootstrap** — creating the foundational project structure before any feature implementation.
+`ralf` is a multi-model autonomous loop engine with a TUI. This prompt focuses on **Milestone 0: Repo Bootstrap** — creating the foundational project structure before any feature implementation.
 
 Read `SPEC.md` and `docs/DEV_ROADMAP.md` for full context.
 
@@ -25,7 +25,7 @@ Create a Cargo workspace with three crates:
 ```
 Cargo.toml              # workspace root
 crates/
-├── ralf-engine/        # headless engine (config, state, modal adapters, verification)
+├── ralf-engine/        # headless engine (config, state, model adapters, verification)
 │   ├── Cargo.toml
 │   └── src/
 │       └── lib.rs

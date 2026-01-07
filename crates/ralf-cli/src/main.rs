@@ -1,8 +1,8 @@
-//! ralf CLI: Command-line interface for multi-modal autonomous loops
+//! ralf CLI: Command-line interface for multi-model autonomous loops
 
 use clap::{Parser, Subcommand};
 
-/// Multi-modal autonomous loop engine with TUI
+/// Multi-model autonomous loop engine with TUI
 #[derive(Parser)]
 #[command(name = "ralf")]
 #[command(author, version, about, long_about = None)]
@@ -16,7 +16,7 @@ enum Commands {
     /// Open the TUI (default when no command specified)
     Tui,
 
-    /// Detect modals and print diagnostics
+    /// Detect models and print diagnostics
     Doctor {
         /// Output as JSON
         #[arg(long)]
@@ -26,15 +26,15 @@ enum Commands {
     /// Initialize .ralf/ directory and config
     Init,
 
-    /// Probe modals with timeout to detect auth prompts/hangs
+    /// Probe models with timeout to detect auth prompts/hangs
     Probe {
         /// Output as JSON
         #[arg(long)]
         json: bool,
 
-        /// Probe specific modal only
+        /// Probe specific model only
         #[arg(long)]
-        modal: Option<String>,
+        model: Option<String>,
     },
 
     /// Run the autonomous loop
@@ -51,9 +51,9 @@ enum Commands {
         #[arg(long)]
         branch: Option<String>,
 
-        /// Modals to use (comma-separated, e.g. claude,codex,gemini)
+        /// Models to use (comma-separated, e.g. claude,codex,gemini)
         #[arg(long, value_delimiter = ',')]
-        modals: Option<Vec<String>>,
+        models: Option<Vec<String>>,
     },
 
     /// Print current state and cooldowns
@@ -84,7 +84,7 @@ fn main() {
         Some(Commands::Init) => {
             println!("init not implemented");
         }
-        Some(Commands::Probe { json: _, modal: _ }) => {
+        Some(Commands::Probe { json: _, model: _ }) => {
             println!("probe not implemented");
         }
         Some(Commands::Run { .. }) => {
