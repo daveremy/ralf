@@ -17,6 +17,7 @@ ralf-engine.workspace = true
 ralf-tui.workspace = true
 clap.workspace = true
 serde_json.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true

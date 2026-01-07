@@ -2,10 +2,12 @@
 
 use clap::{Parser, Subcommand};
 use ralf_engine::{
-    discover_models, probe_model, Config, Cooldowns, RunState, RunStatus,
+    check_promise, discover_models, get_git_info, hash_prompt, invoke_model, probe_model,
+    run_verifier, select_model, write_changelog_entry, ChangelogEntry, Config, Cooldowns,
+    IterationStatus, RunState, RunStatus,
 };
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Multi-model autonomous loop engine with TUI
 #[derive(Parser)]
@@ -203,8 +205,8 @@ fn cmd_init() {
         }
     }
 
-    // Check for prompt file
-    let prompt_path = ralf_dir.join("PROMPT.md");
+    // Check for prompt file (at repo root, not in .ralf/)
+    let prompt_path = Path::new("PROMPT.md");
     if !prompt_path.exists() {
         let default_prompt = r"# Task Description
 
@@ -221,7 +223,7 @@ When the task is complete, output:
 
 <promise>COMPLETE</promise>
 ";
-        if let Err(e) = std::fs::write(&prompt_path, default_prompt) {
+        if let Err(e) = std::fs::write(prompt_path, default_prompt) {
             eprintln!("Failed to write prompt file: {e}");
             std::process::exit(1);
         }
@@ -287,8 +289,8 @@ fn cmd_probe(json: bool, model_filter: Option<String>, timeout_secs: u64) {
 }
 
 fn cmd_run(
-    _max_iterations: Option<u32>,
-    _max_seconds: Option<u32>,
+    max_iterations: Option<u32>,
+    max_seconds: Option<u32>,
     _branch: Option<String>,
     _models: Option<Vec<String>>,
 ) {
@@ -306,7 +308,8 @@ fn cmd_run(
         std::process::exit(1);
     }
 
-    let prompt_path = ralf_dir.join("PROMPT.md");
+    // Prompt is at repo root
+    let prompt_path = Path::new("PROMPT.md");
     if !prompt_path.exists() {
         eprintln!("Error: PROMPT.md not found. Run `ralf init` first.");
         std::process::exit(1);
@@ -321,9 +324,9 @@ fn cmd_run(
         }
     };
 
-    println!("Loaded config with {} model(s)", config.models.len());
-    println!("Promise: {}", config.completion_promise);
-    println!("\nLoop runner not yet implemented - use TUI for now");
+    // Run the loop
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+    rt.block_on(run_loop(config, ralf_dir, prompt_path, max_iterations, max_seconds));
 }
 
 fn cmd_status(json: bool) {
@@ -407,4 +410,246 @@ fn cmd_cancel() {
 
     let run_id = state.run_id.as_deref().unwrap_or("unknown");
     println!("Cancelled run {run_id}");
+}
+
+/// Run the main autonomous loop.
+#[allow(clippy::too_many_lines, clippy::similar_names)]
+async fn run_loop(
+    config: Config,
+    ralf_dir: &Path,
+    prompt_path: &Path,
+    max_iterations: Option<u32>,
+    max_seconds: Option<u32>,
+) {
+    let state_path = ralf_dir.join("state.json");
+    let cooldowns_path = ralf_dir.join("cooldowns.json");
+    let runs_dir = ralf_dir.join("runs");
+    let changelog_dir = ralf_dir.join("changelog");
+
+    // Load or create state
+    let mut state = RunState::load(&state_path).unwrap_or_default();
+    let mut cooldowns = Cooldowns::load(&cooldowns_path).unwrap_or_default();
+
+    // Start a new run
+    let run_id = state.start_run();
+    println!("Starting run {run_id}");
+
+    // Create run directory
+    let run_dir = runs_dir.join(&run_id);
+    if let Err(e) = std::fs::create_dir_all(&run_dir) {
+        eprintln!("Failed to create run directory: {e}");
+        state.fail();
+        let _ = state.save(&state_path);
+        std::process::exit(1);
+    }
+
+    // Read the prompt
+    let prompt = match std::fs::read_to_string(prompt_path) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Failed to read prompt: {e}");
+            state.fail();
+            let _ = state.save(&state_path);
+            std::process::exit(1);
+        }
+    };
+    let prompt_hash = hash_prompt(&prompt);
+
+    // Save initial state
+    let _ = state.save(&state_path);
+
+    let start_time = Instant::now();
+    let max_iterations = max_iterations.unwrap_or(100);
+    let max_duration = max_seconds.map(|s| Duration::from_secs(u64::from(s)));
+
+    println!("Prompt hash: {}", &prompt_hash[..8]);
+    println!("Max iterations: {max_iterations}");
+    if let Some(d) = max_duration {
+        println!("Max duration: {}s", d.as_secs());
+    }
+    println!();
+
+    // Main loop
+    loop {
+        // Check iteration limit
+        if state.iteration >= max_iterations {
+            println!("\nMax iterations ({max_iterations}) reached");
+            state.fail();
+            break;
+        }
+
+        // Check time limit
+        if let Some(max_dur) = max_duration {
+            if start_time.elapsed() > max_dur {
+                println!("\nMax duration reached");
+                state.fail();
+                break;
+            }
+        }
+
+        // Clear expired cooldowns
+        cooldowns.clear_expired();
+
+        // Select a model
+        let Some(model) = select_model(&config, &cooldowns, &mut state) else {
+            // All models in cooldown - wait for earliest expiry
+            if let Some(expiry) = cooldowns.earliest_expiry() {
+                let now = ralf_engine::state::current_timestamp();
+                let wait_secs = expiry.saturating_sub(now);
+                println!("All models in cooldown, waiting {wait_secs}s...");
+                tokio::time::sleep(Duration::from_secs(wait_secs + 1)).await;
+                continue;
+            }
+            eprintln!("No models available");
+            state.fail();
+            break;
+        };
+
+        state.next_iteration();
+        println!(
+            "=== Iteration {} - Model: {} ===",
+            state.iteration, model.name
+        );
+
+        // Save state
+        let _ = state.save(&state_path);
+
+        // Invoke the model
+        let invocation = match invoke_model(model, &prompt, &run_dir).await {
+            Ok(mut inv) => {
+                inv.has_promise = check_promise(&inv.stdout, &config.completion_promise);
+                inv
+            }
+            Err(ralf_engine::RunnerError::Timeout(name)) => {
+                println!("  Model {name} timed out");
+                let entry = ChangelogEntry {
+                    changelog_dir: &changelog_dir,
+                    run_id: &run_id,
+                    iteration: state.iteration,
+                    invocation: &ralf_engine::InvocationResult {
+                        model: model.name.clone(),
+                        exit_code: None,
+                        stdout: String::new(),
+                        stderr: String::new(),
+                        rate_limited: false,
+                        duration_ms: model.timeout_seconds * 1000,
+                        has_promise: false,
+                    },
+                    verifier_results: &[],
+                    prompt_hash: &prompt_hash,
+                    git_info: &get_git_info(),
+                    status: IterationStatus::Timeout,
+                    reason: "Model timed out",
+                    log_path: run_dir.join(format!("{}.log", model.name)),
+                };
+                let _ = write_changelog_entry(&entry);
+                cooldowns.set_cooldown(&model.name, model.default_cooldown_seconds, "timeout");
+                let _ = cooldowns.save(&cooldowns_path);
+                continue;
+            }
+            Err(e) => {
+                eprintln!("  Model error: {e}");
+                continue;
+            }
+        };
+
+        // Check for rate limiting
+        if invocation.rate_limited {
+            println!(
+                "  Rate limited ({}ms), cooling down for {}s",
+                invocation.duration_ms, model.default_cooldown_seconds
+            );
+            let entry = ChangelogEntry {
+                changelog_dir: &changelog_dir,
+                run_id: &run_id,
+                iteration: state.iteration,
+                invocation: &invocation,
+                verifier_results: &[],
+                prompt_hash: &prompt_hash,
+                git_info: &get_git_info(),
+                status: IterationStatus::RateLimited,
+                reason: "Rate limited",
+                log_path: run_dir.join(format!("{}.log", model.name)),
+            };
+            let _ = write_changelog_entry(&entry);
+            cooldowns.set_cooldown(&model.name, model.default_cooldown_seconds, "rate_limit");
+            let _ = cooldowns.save(&cooldowns_path);
+            continue;
+        }
+
+        println!("  Model completed in {}ms", invocation.duration_ms);
+        println!("  Has promise: {}", invocation.has_promise);
+
+        // Run verifiers
+        let mut verifier_results = Vec::new();
+        let mut all_passed = true;
+
+        for verifier in &config.verifiers {
+            print!("  Running verifier '{}'... ", verifier.name);
+            match run_verifier(verifier, &run_dir).await {
+                Ok(result) => {
+                    if result.passed {
+                        println!("PASS ({}ms)", result.duration_ms);
+                    } else {
+                        println!("FAIL ({}ms)", result.duration_ms);
+                        all_passed = false;
+                    }
+                    verifier_results.push(result);
+                }
+                Err(e) => {
+                    println!("ERROR: {e}");
+                    all_passed = false;
+                    verifier_results.push(ralf_engine::VerifierResult {
+                        name: verifier.name.clone(),
+                        passed: false,
+                        exit_code: None,
+                        output: e.to_string(),
+                        duration_ms: 0,
+                    });
+                }
+            }
+        }
+
+        // Determine status and reason
+        let (status, reason) = if invocation.has_promise && all_passed {
+            (IterationStatus::Success, "All verifiers passed with promise")
+        } else if invocation.has_promise && !all_passed {
+            (IterationStatus::VerifierFailed, "Promise found but verifiers failed")
+        } else if !invocation.has_promise && all_passed {
+            (IterationStatus::VerifierFailed, "Verifiers passed but no promise")
+        } else {
+            (IterationStatus::VerifierFailed, "Verifiers failed, no promise")
+        };
+
+        // Write changelog entry
+        let entry = ChangelogEntry {
+            changelog_dir: &changelog_dir,
+            run_id: &run_id,
+            iteration: state.iteration,
+            invocation: &invocation,
+            verifier_results: &verifier_results,
+            prompt_hash: &prompt_hash,
+            git_info: &get_git_info(),
+            status,
+            reason,
+            log_path: run_dir.join(format!("{}.log", model.name)),
+        };
+        let _ = write_changelog_entry(&entry);
+
+        // Check for completion
+        if invocation.has_promise && all_passed {
+            println!("\n=== RUN COMPLETE ===");
+            println!("Promise found and all verifiers passed!");
+            state.complete();
+            break;
+        }
+
+        println!("  Status: {status} - {reason}");
+    }
+
+    // Save final state
+    let _ = state.save(&state_path);
+    let _ = cooldowns.save(&cooldowns_path);
+
+    println!("\nRun {} finished with status: {}", run_id, state.status);
 }

@@ -196,10 +196,12 @@ pub async fn run_verifier(
 }
 
 /// Select the next model to use based on the selection strategy.
+///
+/// For round-robin selection, this advances the index for the next call.
 pub fn select_model<'a>(
     config: &'a Config,
     cooldowns: &Cooldowns,
-    state: &RunState,
+    state: &mut RunState,
 ) -> Option<&'a ModelConfig> {
     let available: Vec<&ModelConfig> = config
         .models
@@ -215,6 +217,8 @@ pub fn select_model<'a>(
         ModelSelection::RoundRobin => {
             // Get next model in rotation
             let index = state.last_model_index % available.len();
+            // Advance index for next selection
+            state.last_model_index = state.last_model_index.wrapping_add(1);
             Some(available[index])
         }
         ModelSelection::Priority => {
@@ -388,7 +392,17 @@ mod tests {
         let mut state = RunState::default();
         state.last_model_index = 0;
 
-        let model = select_model(&config, &cooldowns, &state);
-        assert!(model.is_some());
+        // First selection should get first model and advance index
+        let model1 = select_model(&config, &cooldowns, &mut state);
+        assert!(model1.is_some());
+        assert_eq!(state.last_model_index, 1);
+
+        // Second selection should get second model and advance index
+        let model2 = select_model(&config, &cooldowns, &mut state);
+        assert!(model2.is_some());
+        assert_eq!(state.last_model_index, 2);
+
+        // Models should be different (round-robin working)
+        assert_ne!(model1.unwrap().name, model2.unwrap().name);
     }
 }
