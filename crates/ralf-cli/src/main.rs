@@ -549,6 +549,27 @@ async fn run_loop(
             }
             Err(e) => {
                 eprintln!("  Model error: {e}");
+                let entry = ChangelogEntry {
+                    changelog_dir: &changelog_dir,
+                    run_id: &run_id,
+                    iteration: state.iteration,
+                    invocation: &ralf_engine::InvocationResult {
+                        model: model.name.clone(),
+                        exit_code: None,
+                        stdout: String::new(),
+                        stderr: e.to_string(),
+                        rate_limited: false,
+                        duration_ms: 0,
+                        has_promise: false,
+                    },
+                    verifier_results: &[],
+                    prompt_hash: &prompt_hash,
+                    git_info: &get_git_info(),
+                    status: IterationStatus::Error,
+                    reason: "Model invocation failed",
+                    log_path: run_dir.join(format!("{}.log", model.name)),
+                };
+                let _ = write_changelog_entry(&entry);
                 continue;
             }
         };
