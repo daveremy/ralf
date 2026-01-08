@@ -365,9 +365,10 @@ Thread state must survive crashes and restarts.
 ### Atomic Writes
 
 All state changes use atomic write pattern:
-1. Write to `thread.json.tmp`
+1. Write to unique temp file: `thread.json.<random>.tmp`
 2. `fsync()` the file
 3. Rename to `thread.json`
+4. Clean up temp file on error
 
 ### Schema Versioning
 
@@ -375,20 +376,29 @@ All state changes use atomic write pattern:
 {
   "schema_version": 1,
   "id": "abc123",
-  "phase": { "Running": { "run_id": "run-001", "iteration": 3 } },
+  "title": "Add feature X",
+  "phase": {"type": "Running", "data": {"iteration": 3}},
+  "current_run_id": "run-001",
+  "baseline": {"branch": "main", "commit_sha": "abc...", "captured_at": "..."},
   ...
 }
 ```
+
+Note: Phase uses tagged enum serialization (`#[serde(tag = "type", content = "data")]`):
+- Unit variants: `{"type": "Drafting"}`
+- Data variants: `{"type": "Running", "data": {"iteration": 3}}`
 
 Migration logic handles older versions on load.
 
 ### What's Stored Where
 
+All paths relative to `.ralf/` directory.
+
 | Data | Location | Why |
 |------|----------|-----|
-| Thread state (phase, pointers) | `thread.json` | Small, frequently updated |
-| Spec revisions | `spec/v1.md`, `spec/v2.md` | Immutable after creation |
-| Run records | `runs/run-001/run.json` | Append-only |
-| Run outputs | `runs/run-001/output.log` | Large, append-only |
-| Conversation | `transcript.jsonl` | Append-only, line-delimited |
-| Git baseline | `baseline.json` | Captured at Preflight |
+| Thread state (phase, pointers, baseline) | `threads/<id>/thread.json` | Small, frequently updated |
+| Spec revisions | `threads/<id>/spec/v1.md` | Immutable after creation |
+| Active thread (UI selection) | `active_thread` | Plain text file with thread ID |
+| Run records | `runs/<run-id>/run.json` | Append-only |
+| Run outputs | `runs/<run-id>/output.log` | Large, append-only |
+| Spec conversation | `spec/threads/<id>.jsonl` | Append-only, line-delimited |
