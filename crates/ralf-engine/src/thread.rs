@@ -5,7 +5,24 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use uuid::Uuid;
+
+/// Error returned when a state transition is invalid.
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
+pub enum TransitionError {
+    /// The transition is not allowed by the state machine.
+    #[error("Cannot transition from {from} to {to}: {reason}")]
+    InvalidTransition {
+        from: String,
+        to: String,
+        reason: String,
+    },
+
+    /// Cannot transition from a terminal state.
+    #[error("Cannot transition from terminal state: {0}")]
+    FromTerminalState(String),
+}
 
 /// A ralf workflow thread representing a single work item.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -106,25 +123,77 @@ impl Thread {
 
     /// Get a human-readable display name for the current phase.
     pub fn phase_display_name(&self) -> &'static str {
-        match &self.phase {
-            ThreadPhase::Drafting => "Drafting",
-            ThreadPhase::Assessing => "Assessing",
-            ThreadPhase::Finalized => "Finalized",
-            ThreadPhase::Preflight => "Preflight",
-            ThreadPhase::PreflightFailed { .. } => "Preflight Failed",
-            ThreadPhase::Configuring => "Configuring",
-            ThreadPhase::Running { .. } => "Running",
-            ThreadPhase::Paused { .. } => "Paused",
-            ThreadPhase::Verifying { .. } => "Verifying",
-            ThreadPhase::Stuck { .. } => "Stuck",
-            ThreadPhase::Implemented => "Implemented",
-            ThreadPhase::Polishing => "Polishing",
-            ThreadPhase::PendingReview => "Pending Review",
-            ThreadPhase::Approved => "Approved",
-            ThreadPhase::ReadyToCommit => "Ready to Commit",
-            ThreadPhase::Done { .. } => "Done",
-            ThreadPhase::Abandoned { .. } => "Abandoned",
+        self.phase.display_name()
+    }
+
+    /// Check if transition to target phase is valid per state machine.
+    ///
+    /// Returns `Ok(())` if the transition is valid, or an error explaining why not.
+    /// This validates the phase kind (discriminant), not internal data consistency.
+    pub fn can_transition_to(&self, target: &ThreadPhase) -> Result<(), TransitionError> {
+        // Cannot transition from terminal states
+        if self.is_terminal() {
+            return Err(TransitionError::FromTerminalState(
+                self.phase.display_name().to_string(),
+            ));
         }
+
+        // Check if transition is valid based on current phase
+        let valid = self.phase.valid_transitions();
+        let target_kind = target.kind();
+
+        if valid.contains(&target_kind) {
+            Ok(())
+        } else {
+            Err(TransitionError::InvalidTransition {
+                from: self.phase.display_name().to_string(),
+                to: target.display_name().to_string(),
+                reason: format!(
+                    "Valid transitions from {} are: {:?}",
+                    self.phase.display_name(),
+                    valid
+                ),
+            })
+        }
+    }
+
+    /// Execute transition: validates, updates phase, updates timestamp.
+    ///
+    /// Returns error if transition is invalid, leaving state unchanged.
+    pub fn transition_to(&mut self, target: ThreadPhase) -> Result<(), TransitionError> {
+        self.can_transition_to(&target)?;
+        self.phase = target;
+        self.updated_at = Utc::now();
+        Ok(())
+    }
+
+    /// Get all valid next phases from current phase.
+    ///
+    /// Always includes `Abandoned` for non-terminal states.
+    /// Returns empty vec for terminal states.
+    /// Returned phases have sensible default data (caller populates actual data).
+    pub fn available_transitions(&self) -> Vec<ThreadPhase> {
+        if self.is_terminal() {
+            return vec![];
+        }
+
+        self.phase
+            .valid_transitions()
+            .into_iter()
+            .map(PhaseKind::to_phase_with_defaults)
+            .collect()
+    }
+
+    /// Check if transitioning to target requires workspace reset.
+    ///
+    /// Returns true for backward transitions that discard implementation work:
+    /// - `Stuck → Drafting`
+    /// - `PendingReview → Drafting`
+    pub fn requires_workspace_reset(&self, target: &ThreadPhase) -> bool {
+        matches!(
+            (&self.phase, target),
+            (ThreadPhase::Stuck { .. } | ThreadPhase::PendingReview, ThreadPhase::Drafting)
+        )
     }
 }
 
@@ -180,6 +249,159 @@ pub enum ThreadPhase {
     // Terminal
     /// Thread was abandoned.
     Abandoned { reason: String },
+}
+
+/// Phase kind for comparing discriminants without data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PhaseKind {
+    Drafting,
+    Assessing,
+    Finalized,
+    Preflight,
+    PreflightFailed,
+    Configuring,
+    Running,
+    Paused,
+    Verifying,
+    Stuck,
+    Implemented,
+    Polishing,
+    PendingReview,
+    Approved,
+    ReadyToCommit,
+    Done,
+    Abandoned,
+}
+
+impl std::fmt::Display for PhaseKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{self:?}")
+    }
+}
+
+impl PhaseKind {
+    /// Convert to a `ThreadPhase` with sensible default data.
+    pub fn to_phase_with_defaults(self) -> ThreadPhase {
+        match self {
+            PhaseKind::Drafting => ThreadPhase::Drafting,
+            PhaseKind::Assessing => ThreadPhase::Assessing,
+            PhaseKind::Finalized => ThreadPhase::Finalized,
+            PhaseKind::Preflight => ThreadPhase::Preflight,
+            PhaseKind::PreflightFailed => ThreadPhase::PreflightFailed {
+                reason: String::new(),
+            },
+            PhaseKind::Configuring => ThreadPhase::Configuring,
+            PhaseKind::Running => ThreadPhase::Running { iteration: 1 },
+            PhaseKind::Paused => ThreadPhase::Paused { iteration: 1 },
+            PhaseKind::Verifying => ThreadPhase::Verifying { iteration: 1 },
+            PhaseKind::Stuck => ThreadPhase::Stuck {
+                diagnosis: StuckDiagnosis {
+                    iterations_attempted: 0,
+                    models_tried: vec![],
+                    best_criteria_passed: 0,
+                    total_criteria: 0,
+                    last_error: None,
+                },
+            },
+            PhaseKind::Implemented => ThreadPhase::Implemented,
+            PhaseKind::Polishing => ThreadPhase::Polishing,
+            PhaseKind::PendingReview => ThreadPhase::PendingReview,
+            PhaseKind::Approved => ThreadPhase::Approved,
+            PhaseKind::ReadyToCommit => ThreadPhase::ReadyToCommit,
+            PhaseKind::Done => ThreadPhase::Done {
+                commit_sha: String::new(),
+            },
+            PhaseKind::Abandoned => ThreadPhase::Abandoned {
+                reason: String::new(),
+            },
+        }
+    }
+}
+
+impl ThreadPhase {
+    /// Get the phase kind (discriminant) for comparison.
+    pub fn kind(&self) -> PhaseKind {
+        match self {
+            ThreadPhase::Drafting => PhaseKind::Drafting,
+            ThreadPhase::Assessing => PhaseKind::Assessing,
+            ThreadPhase::Finalized => PhaseKind::Finalized,
+            ThreadPhase::Preflight => PhaseKind::Preflight,
+            ThreadPhase::PreflightFailed { .. } => PhaseKind::PreflightFailed,
+            ThreadPhase::Configuring => PhaseKind::Configuring,
+            ThreadPhase::Running { .. } => PhaseKind::Running,
+            ThreadPhase::Paused { .. } => PhaseKind::Paused,
+            ThreadPhase::Verifying { .. } => PhaseKind::Verifying,
+            ThreadPhase::Stuck { .. } => PhaseKind::Stuck,
+            ThreadPhase::Implemented => PhaseKind::Implemented,
+            ThreadPhase::Polishing => PhaseKind::Polishing,
+            ThreadPhase::PendingReview => PhaseKind::PendingReview,
+            ThreadPhase::Approved => PhaseKind::Approved,
+            ThreadPhase::ReadyToCommit => PhaseKind::ReadyToCommit,
+            ThreadPhase::Done { .. } => PhaseKind::Done,
+            ThreadPhase::Abandoned { .. } => PhaseKind::Abandoned,
+        }
+    }
+
+    /// Get a human-readable display name.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            ThreadPhase::Drafting => "Drafting",
+            ThreadPhase::Assessing => "Assessing",
+            ThreadPhase::Finalized => "Finalized",
+            ThreadPhase::Preflight => "Preflight",
+            ThreadPhase::PreflightFailed { .. } => "Preflight Failed",
+            ThreadPhase::Configuring => "Configuring",
+            ThreadPhase::Running { .. } => "Running",
+            ThreadPhase::Paused { .. } => "Paused",
+            ThreadPhase::Verifying { .. } => "Verifying",
+            ThreadPhase::Stuck { .. } => "Stuck",
+            ThreadPhase::Implemented => "Implemented",
+            ThreadPhase::Polishing => "Polishing",
+            ThreadPhase::PendingReview => "Pending Review",
+            ThreadPhase::Approved => "Approved",
+            ThreadPhase::ReadyToCommit => "Ready to Commit",
+            ThreadPhase::Done { .. } => "Done",
+            ThreadPhase::Abandoned { .. } => "Abandoned",
+        }
+    }
+
+    /// Get valid transitions from this phase per the state machine.
+    ///
+    /// All non-terminal phases can transition to Abandoned.
+    #[allow(clippy::enum_glob_use)] // Glob import improves readability here
+    pub fn valid_transitions(&self) -> Vec<PhaseKind> {
+        use PhaseKind::*;
+
+        match self {
+            // Phase 1: Spec Creation
+            ThreadPhase::Drafting => vec![Assessing, Finalized, Abandoned],
+            ThreadPhase::Assessing => vec![Drafting, Finalized, Abandoned],
+            ThreadPhase::Finalized => vec![Drafting, Preflight, Abandoned],
+
+            // Phase 2: Implementation
+            ThreadPhase::Preflight => vec![Configuring, PreflightFailed, Abandoned],
+            ThreadPhase::PreflightFailed { .. } => vec![Preflight, Drafting, Abandoned],
+            ThreadPhase::Configuring => vec![Running, Abandoned],
+            ThreadPhase::Running { .. } => vec![Verifying, Paused, Stuck, Abandoned],
+            ThreadPhase::Paused { .. } => vec![Running, Configuring, Abandoned],
+            ThreadPhase::Verifying { .. } => vec![Running, Stuck, Implemented, Abandoned],
+            ThreadPhase::Stuck { .. } => vec![Configuring, Running, Drafting, Abandoned],
+            ThreadPhase::Implemented => vec![Polishing, PendingReview, Abandoned],
+
+            // Phase 3: Polish
+            ThreadPhase::Polishing => vec![Implemented, Abandoned],
+
+            // Phase 4: Review
+            ThreadPhase::PendingReview => vec![Approved, Running, Drafting, Abandoned],
+            ThreadPhase::Approved => vec![ReadyToCommit, Abandoned],
+
+            // Phase 5: Complete
+            ThreadPhase::ReadyToCommit => vec![Done, Abandoned],
+
+            // Terminal states have no valid transitions
+            ThreadPhase::Done { .. } | ThreadPhase::Abandoned { .. } => vec![],
+        }
+    }
 }
 
 /// Workflow mode determining how much automation to use.
@@ -451,5 +673,501 @@ mod tests {
         let json = serde_json::to_string(&config).expect("serialize config");
         let restored: RunConfig = serde_json::from_str(&json).expect("deserialize config");
         assert_eq!(config, restored);
+    }
+
+    // ==========================================
+    // F2: State Transition Tests
+    // ==========================================
+
+    #[test]
+    fn test_can_transition_from_drafting() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::Drafting;
+
+        // Valid transitions
+        assert!(thread.can_transition_to(&ThreadPhase::Assessing).is_ok());
+        assert!(thread.can_transition_to(&ThreadPhase::Finalized).is_ok());
+        assert!(thread
+            .can_transition_to(&ThreadPhase::Abandoned {
+                reason: "x".to_string()
+            })
+            .is_ok());
+
+        // Invalid transitions
+        assert!(thread.can_transition_to(&ThreadPhase::Running { iteration: 1 }).is_err());
+        assert!(thread.can_transition_to(&ThreadPhase::Implemented).is_err());
+    }
+
+    #[test]
+    fn test_can_transition_from_assessing() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::Assessing;
+
+        assert!(thread.can_transition_to(&ThreadPhase::Drafting).is_ok());
+        assert!(thread.can_transition_to(&ThreadPhase::Finalized).is_ok());
+        assert!(thread.can_transition_to(&ThreadPhase::Running { iteration: 1 }).is_err());
+    }
+
+    #[test]
+    fn test_can_transition_from_finalized() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::Finalized;
+
+        assert!(thread.can_transition_to(&ThreadPhase::Drafting).is_ok()); // reopen
+        assert!(thread.can_transition_to(&ThreadPhase::Preflight).is_ok());
+        assert!(thread.can_transition_to(&ThreadPhase::Running { iteration: 1 }).is_err());
+    }
+
+    #[test]
+    fn test_can_transition_from_preflight() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::Preflight;
+
+        assert!(thread.can_transition_to(&ThreadPhase::Configuring).is_ok());
+        assert!(thread
+            .can_transition_to(&ThreadPhase::PreflightFailed {
+                reason: "x".to_string()
+            })
+            .is_ok());
+        assert!(thread.can_transition_to(&ThreadPhase::Running { iteration: 1 }).is_err());
+    }
+
+    #[test]
+    fn test_can_transition_from_preflight_failed() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::PreflightFailed {
+            reason: "dirty".to_string(),
+        };
+
+        assert!(thread.can_transition_to(&ThreadPhase::Preflight).is_ok()); // retry
+        assert!(thread.can_transition_to(&ThreadPhase::Drafting).is_ok()); // fix spec
+        assert!(thread.can_transition_to(&ThreadPhase::Running { iteration: 1 }).is_err());
+    }
+
+    #[test]
+    fn test_can_transition_from_configuring() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::Configuring;
+
+        assert!(thread.can_transition_to(&ThreadPhase::Running { iteration: 1 }).is_ok());
+        assert!(thread.can_transition_to(&ThreadPhase::Drafting).is_err());
+    }
+
+    #[test]
+    fn test_can_transition_from_running() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::Running { iteration: 3 };
+
+        assert!(thread.can_transition_to(&ThreadPhase::Verifying { iteration: 3 }).is_ok());
+        assert!(thread.can_transition_to(&ThreadPhase::Paused { iteration: 3 }).is_ok());
+        assert!(thread
+            .can_transition_to(&ThreadPhase::Stuck {
+                diagnosis: StuckDiagnosis {
+                    iterations_attempted: 3,
+                    models_tried: vec![],
+                    best_criteria_passed: 0,
+                    total_criteria: 1,
+                    last_error: None,
+                }
+            })
+            .is_ok());
+        assert!(thread.can_transition_to(&ThreadPhase::Drafting).is_err());
+    }
+
+    #[test]
+    fn test_can_transition_from_paused() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::Paused { iteration: 2 };
+
+        assert!(thread.can_transition_to(&ThreadPhase::Running { iteration: 2 }).is_ok());
+        assert!(thread.can_transition_to(&ThreadPhase::Configuring).is_ok());
+        assert!(thread.can_transition_to(&ThreadPhase::Drafting).is_err());
+    }
+
+    #[test]
+    fn test_can_transition_from_verifying() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::Verifying { iteration: 2 };
+
+        assert!(thread.can_transition_to(&ThreadPhase::Running { iteration: 3 }).is_ok());
+        assert!(thread
+            .can_transition_to(&ThreadPhase::Stuck {
+                diagnosis: StuckDiagnosis {
+                    iterations_attempted: 2,
+                    models_tried: vec![],
+                    best_criteria_passed: 0,
+                    total_criteria: 1,
+                    last_error: None,
+                }
+            })
+            .is_ok());
+        assert!(thread.can_transition_to(&ThreadPhase::Implemented).is_ok());
+        assert!(thread.can_transition_to(&ThreadPhase::Drafting).is_err());
+    }
+
+    #[test]
+    fn test_can_transition_from_stuck() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::Stuck {
+            diagnosis: StuckDiagnosis {
+                iterations_attempted: 5,
+                models_tried: vec!["claude".to_string()],
+                best_criteria_passed: 2,
+                total_criteria: 5,
+                last_error: None,
+            },
+        };
+
+        assert!(thread.can_transition_to(&ThreadPhase::Configuring).is_ok());
+        assert!(thread.can_transition_to(&ThreadPhase::Running { iteration: 1 }).is_ok()); // manual assist
+        assert!(thread.can_transition_to(&ThreadPhase::Drafting).is_ok()); // spec was wrong
+        assert!(thread.can_transition_to(&ThreadPhase::Implemented).is_err());
+    }
+
+    #[test]
+    fn test_can_transition_from_implemented() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::Implemented;
+
+        assert!(thread.can_transition_to(&ThreadPhase::Polishing).is_ok());
+        assert!(thread.can_transition_to(&ThreadPhase::PendingReview).is_ok());
+        assert!(thread.can_transition_to(&ThreadPhase::Drafting).is_err());
+    }
+
+    #[test]
+    fn test_can_transition_from_polishing() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::Polishing;
+
+        assert!(thread.can_transition_to(&ThreadPhase::Implemented).is_ok());
+        assert!(thread.can_transition_to(&ThreadPhase::PendingReview).is_err());
+    }
+
+    #[test]
+    fn test_can_transition_from_pending_review() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::PendingReview;
+
+        assert!(thread.can_transition_to(&ThreadPhase::Approved).is_ok());
+        assert!(thread.can_transition_to(&ThreadPhase::Running { iteration: 1 }).is_ok()); // impl bugs
+        assert!(thread.can_transition_to(&ThreadPhase::Drafting).is_ok()); // spec was wrong
+        assert!(thread.can_transition_to(&ThreadPhase::Implemented).is_err());
+    }
+
+    #[test]
+    fn test_can_transition_from_approved() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::Approved;
+
+        assert!(thread.can_transition_to(&ThreadPhase::ReadyToCommit).is_ok());
+        assert!(thread.can_transition_to(&ThreadPhase::Drafting).is_err());
+    }
+
+    #[test]
+    fn test_can_transition_from_ready_to_commit() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::ReadyToCommit;
+
+        assert!(thread
+            .can_transition_to(&ThreadPhase::Done {
+                commit_sha: "abc".to_string()
+            })
+            .is_ok());
+        assert!(thread.can_transition_to(&ThreadPhase::Drafting).is_err());
+    }
+
+    #[test]
+    fn test_cannot_transition_from_terminal() {
+        let mut thread = Thread::new("Test");
+
+        // From Done
+        thread.phase = ThreadPhase::Done {
+            commit_sha: "abc".to_string(),
+        };
+        let err = thread.can_transition_to(&ThreadPhase::Drafting).unwrap_err();
+        assert!(matches!(err, TransitionError::FromTerminalState(_)));
+
+        // From Abandoned
+        thread.phase = ThreadPhase::Abandoned {
+            reason: "test".to_string(),
+        };
+        let err = thread.can_transition_to(&ThreadPhase::Drafting).unwrap_err();
+        assert!(matches!(err, TransitionError::FromTerminalState(_)));
+    }
+
+    #[test]
+    fn test_abandon_from_any_non_terminal() {
+        let phases = vec![
+            ThreadPhase::Drafting,
+            ThreadPhase::Assessing,
+            ThreadPhase::Finalized,
+            ThreadPhase::Preflight,
+            ThreadPhase::PreflightFailed {
+                reason: "x".to_string(),
+            },
+            ThreadPhase::Configuring,
+            ThreadPhase::Running { iteration: 1 },
+            ThreadPhase::Paused { iteration: 1 },
+            ThreadPhase::Verifying { iteration: 1 },
+            ThreadPhase::Stuck {
+                diagnosis: StuckDiagnosis {
+                    iterations_attempted: 1,
+                    models_tried: vec![],
+                    best_criteria_passed: 0,
+                    total_criteria: 1,
+                    last_error: None,
+                },
+            },
+            ThreadPhase::Implemented,
+            ThreadPhase::Polishing,
+            ThreadPhase::PendingReview,
+            ThreadPhase::Approved,
+            ThreadPhase::ReadyToCommit,
+        ];
+
+        for phase in phases {
+            let mut thread = Thread::new("Test");
+            thread.phase = phase.clone();
+            assert!(
+                thread
+                    .can_transition_to(&ThreadPhase::Abandoned {
+                        reason: "test".to_string()
+                    })
+                    .is_ok(),
+                "Should be able to abandon from {:?}",
+                phase
+            );
+        }
+    }
+
+    #[test]
+    fn test_transition_to_updates_state() {
+        let mut thread = Thread::new("Test");
+        let original_updated_at = thread.updated_at;
+
+        // Small delay to ensure timestamp changes
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        thread.transition_to(ThreadPhase::Assessing).unwrap();
+        assert_eq!(thread.phase, ThreadPhase::Assessing);
+        assert!(thread.updated_at > original_updated_at);
+    }
+
+    #[test]
+    fn test_transition_to_fails_on_invalid() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::Drafting;
+        let original_phase = thread.phase.clone();
+
+        let result = thread.transition_to(ThreadPhase::Implemented);
+        assert!(result.is_err());
+        assert_eq!(thread.phase, original_phase); // State unchanged
+    }
+
+    #[test]
+    fn test_available_transitions_from_drafting() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::Drafting;
+
+        let available = thread.available_transitions();
+        let kinds: Vec<PhaseKind> = available.iter().map(|p| p.kind()).collect();
+
+        assert!(kinds.contains(&PhaseKind::Assessing));
+        assert!(kinds.contains(&PhaseKind::Finalized));
+        assert!(kinds.contains(&PhaseKind::Abandoned));
+        assert!(!kinds.contains(&PhaseKind::Running));
+    }
+
+    #[test]
+    fn test_available_transitions_from_terminal() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::Done {
+            commit_sha: "abc".to_string(),
+        };
+
+        let available = thread.available_transitions();
+        assert!(available.is_empty());
+    }
+
+    #[test]
+    fn test_available_transitions_includes_abandoned() {
+        // All non-terminal states should include Abandoned
+        let phases = vec![
+            ThreadPhase::Drafting,
+            ThreadPhase::Running { iteration: 1 },
+            ThreadPhase::Implemented,
+            ThreadPhase::PendingReview,
+        ];
+
+        for phase in phases {
+            let mut thread = Thread::new("Test");
+            thread.phase = phase;
+            let available = thread.available_transitions();
+            let kinds: Vec<PhaseKind> = available.iter().map(|p| p.kind()).collect();
+            assert!(
+                kinds.contains(&PhaseKind::Abandoned),
+                "Abandoned should be available from {:?}",
+                thread.phase
+            );
+        }
+    }
+
+    #[test]
+    fn test_requires_workspace_reset_stuck_to_drafting() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::Stuck {
+            diagnosis: StuckDiagnosis {
+                iterations_attempted: 5,
+                models_tried: vec![],
+                best_criteria_passed: 0,
+                total_criteria: 1,
+                last_error: None,
+            },
+        };
+
+        assert!(thread.requires_workspace_reset(&ThreadPhase::Drafting));
+        assert!(!thread.requires_workspace_reset(&ThreadPhase::Configuring));
+    }
+
+    #[test]
+    fn test_requires_workspace_reset_pending_review_to_drafting() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::PendingReview;
+
+        assert!(thread.requires_workspace_reset(&ThreadPhase::Drafting));
+        assert!(!thread.requires_workspace_reset(&ThreadPhase::Running { iteration: 1 }));
+        assert!(!thread.requires_workspace_reset(&ThreadPhase::Approved));
+    }
+
+    #[test]
+    fn test_requires_workspace_reset_preflight_failed_to_drafting() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::PreflightFailed {
+            reason: "dirty".to_string(),
+        };
+
+        // PreflightFailed -> Drafting does NOT require reset (no implementation yet)
+        assert!(!thread.requires_workspace_reset(&ThreadPhase::Drafting));
+    }
+
+    #[test]
+    fn test_requires_workspace_reset_forward_transitions() {
+        let mut thread = Thread::new("Test");
+        thread.phase = ThreadPhase::Drafting;
+
+        assert!(!thread.requires_workspace_reset(&ThreadPhase::Finalized));
+        assert!(!thread.requires_workspace_reset(&ThreadPhase::Assessing));
+    }
+
+    #[test]
+    fn test_transition_error_display() {
+        let err = TransitionError::InvalidTransition {
+            from: "Drafting".to_string(),
+            to: "Implemented".to_string(),
+            reason: "not allowed".to_string(),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("Drafting"));
+        assert!(msg.contains("Implemented"));
+
+        let err = TransitionError::FromTerminalState("Done".to_string());
+        let msg = err.to_string();
+        assert!(msg.contains("terminal"));
+        assert!(msg.contains("Done"));
+    }
+
+    #[test]
+    fn test_phase_kind_to_phase_with_defaults() {
+        // Verify all PhaseKind variants can be converted to ThreadPhase
+        let kinds = vec![
+            PhaseKind::Drafting,
+            PhaseKind::Assessing,
+            PhaseKind::Finalized,
+            PhaseKind::Preflight,
+            PhaseKind::PreflightFailed,
+            PhaseKind::Configuring,
+            PhaseKind::Running,
+            PhaseKind::Paused,
+            PhaseKind::Verifying,
+            PhaseKind::Stuck,
+            PhaseKind::Implemented,
+            PhaseKind::Polishing,
+            PhaseKind::PendingReview,
+            PhaseKind::Approved,
+            PhaseKind::ReadyToCommit,
+            PhaseKind::Done,
+            PhaseKind::Abandoned,
+        ];
+
+        for kind in kinds {
+            let phase = kind.to_phase_with_defaults();
+            assert_eq!(phase.kind(), kind, "Round-trip failed for {:?}", kind);
+        }
+    }
+
+    #[test]
+    fn test_full_workflow_happy_path() {
+        let mut thread = Thread::new("Feature X");
+
+        // Spec creation
+        assert!(thread.transition_to(ThreadPhase::Finalized).is_ok());
+
+        // Implementation
+        assert!(thread.transition_to(ThreadPhase::Preflight).is_ok());
+        assert!(thread.transition_to(ThreadPhase::Configuring).is_ok());
+        assert!(thread.transition_to(ThreadPhase::Running { iteration: 1 }).is_ok());
+        assert!(thread.transition_to(ThreadPhase::Verifying { iteration: 1 }).is_ok());
+        assert!(thread.transition_to(ThreadPhase::Implemented).is_ok());
+
+        // Review
+        assert!(thread.transition_to(ThreadPhase::PendingReview).is_ok());
+        assert!(thread.transition_to(ThreadPhase::Approved).is_ok());
+
+        // Complete
+        assert!(thread.transition_to(ThreadPhase::ReadyToCommit).is_ok());
+        assert!(thread
+            .transition_to(ThreadPhase::Done {
+                commit_sha: "abc123".to_string()
+            })
+            .is_ok());
+
+        assert!(thread.is_terminal());
+    }
+
+    #[test]
+    fn test_workflow_with_stuck_recovery() {
+        let mut thread = Thread::new("Feature Y");
+
+        thread.transition_to(ThreadPhase::Finalized).unwrap();
+        thread.transition_to(ThreadPhase::Preflight).unwrap();
+        thread.transition_to(ThreadPhase::Configuring).unwrap();
+        thread
+            .transition_to(ThreadPhase::Running { iteration: 1 })
+            .unwrap();
+
+        // Get stuck
+        thread
+            .transition_to(ThreadPhase::Stuck {
+                diagnosis: StuckDiagnosis {
+                    iterations_attempted: 5,
+                    models_tried: vec!["claude".to_string()],
+                    best_criteria_passed: 2,
+                    total_criteria: 5,
+                    last_error: Some("Tests failed".to_string()),
+                },
+            })
+            .unwrap();
+
+        // Reconfigure and retry
+        thread.transition_to(ThreadPhase::Configuring).unwrap();
+        thread
+            .transition_to(ThreadPhase::Running { iteration: 1 })
+            .unwrap();
+        thread
+            .transition_to(ThreadPhase::Verifying { iteration: 1 })
+            .unwrap();
+        thread.transition_to(ThreadPhase::Implemented).unwrap();
+
+        assert_eq!(thread.phase, ThreadPhase::Implemented);
     }
 }
