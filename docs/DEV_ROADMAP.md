@@ -137,24 +137,57 @@ DoD:
 - **Detailed diff viewer**: Expand Git tab to show actual file diffs, not just changed file list.
 - **Pause/Resume**: Add ability to pause after current iteration and resume later.
 
-### Milestone 5 — AI-powered criteria verification + review rounds
+### Milestone 5a — AI-powered criteria verification
 
 Deliverables:
-- **AI Criteria Verification**:
-  - Parse completion criteria from PROMPT.md (already implemented in M4).
+- **Criteria Verification Engine**:
   - After model outputs `<promise>COMPLETE</promise>`, invoke a verifier model.
   - Verifier model receives: criteria list + current repo state (git diff, file contents).
   - Verifier responds with structured PASS/FAIL for each criterion.
-  - Display criteria with checkmarks/X in the Criteria pane.
+  - Parse structured response and extract per-criterion results.
+- **UI Updates**:
+  - Display criteria with ✓/✗ in the Criteria pane based on verification.
+  - Show verification in progress state.
   - Only complete run if all criteria verified as PASS.
+  - If criteria fail, continue to next iteration (model can retry).
+
+DoD:
+- After promise detected, criteria are verified by a different model.
+- Criteria pane shows PASS/FAIL status for each criterion.
+- Run only completes when all criteria pass; otherwise continues iterating.
+
+### Milestone 5b — TUI integration & snapshot testing
+
+Deliverables:
+- **Snapshot Testing Infrastructure**:
+  - Test utilities module with `create_test_terminal()`, `create_test_app()` helpers.
+  - Widget snapshot tests using insta (StatusBar, KeyHint, LogViewer, TextInput).
+  - Screen snapshot tests for all screens (Welcome, Setup, SpecStudio, RunDashboard).
+  - Consistent 80x24 terminal dimensions, filtered dynamic content.
+- **E2E Test Harness**:
+  - Mock event injection for keyboard input simulation.
+  - Screen state capture and assertion helpers.
+  - User flow tests: Welcome→Setup, navigation, Run Dashboard states.
+- **CI Integration**:
+  - All snapshot tests run in CI.
+  - New/changed snapshots require explicit review and commit.
+
+DoD:
+- At least 5 widget snapshot tests and 4 screen snapshot tests exist.
+- Welcome → Setup navigation flow test passes.
+- Run Dashboard state transitions test passes.
+- Criteria verification display test passes.
+- `cargo test` includes all snapshot tests, CI passes.
+
+### Milestone 5c — Review rounds
+
+Deliverables:
 - **Review Round screen**:
   - Run "spec review" prompts through other available models.
   - Present findings as structured checklist.
   - Apply changes into the draft prompt/spec.
 
 DoD:
-- After promise detected, criteria are verified by a different model.
-- Criteria pane shows PASS/FAIL status for each criterion.
 - User can run at least one review round and apply suggestions into the draft inside the TUI.
 
 ### Milestone 6 — Production polish + release
@@ -192,18 +225,19 @@ DoD:
   - state/cooldowns updated as expected,
   - completion triggers on promise tag.
 
-### TUI integration tests (future)
-- **ratatui-testlib**: PTY-based E2E testing for user interaction flows
-  - Spawn TUI in pseudo-terminal
-  - Send keyboard input, wait for state changes
-  - Assert screen contents
+### TUI integration tests (Milestone 5b)
 - **insta**: Snapshot testing for visual regression
   - Capture TestBackend buffer state
   - Compare against reference snapshots
+  - Widget and screen-level snapshots
+- **E2E test harness**: Mock event injection for user flows
+  - Keyboard input simulation
+  - Screen state capture and assertions
 - Priority test flows:
   - Welcome → Setup → config saved
-  - Welcome → Spec Studio → Finalize → PROMPT.md created
-  - Welcome → Run Dashboard → start/cancel run
+  - Navigation (Tab, Escape, ?)
+  - Run Dashboard state transitions
+  - Criteria verification display
 
 ### Manual smoke tests
 - `claude`, `codex`, `gemini` actual probes on macOS.
