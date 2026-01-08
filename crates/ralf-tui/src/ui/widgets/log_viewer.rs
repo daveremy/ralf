@@ -102,9 +102,11 @@ impl Widget for LogViewer<'_> {
 
         // Create paragraph with scroll
         let text = Text::from(self.lines.clone());
+        #[allow(clippy::cast_possible_truncation)]
+        let scroll_offset = state.offset as u16;
         let paragraph = Paragraph::new(text)
             .style(Styles::default())
-            .scroll((state.offset as u16, 0));
+            .scroll((scroll_offset, 0));
 
         paragraph.render(area, buf);
 

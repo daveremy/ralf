@@ -97,10 +97,9 @@ impl Widget for TextInput<'_> {
         let mut lines = Vec::new();
         let mut current_line = self.prompt.to_string(); // Start first line with prompt
         let mut cursor_drawn = false;
-        let mut char_count = 0;
         let mut is_first_line = true;
 
-        for ch in self.content.chars() {
+        for (char_count, ch) in self.content.chars().enumerate() {
             if ch == '\n' {
                 // Check if cursor is at end of this line
                 if self.focused && char_count == self.cursor && !cursor_drawn {
@@ -122,7 +121,6 @@ impl Widget for TextInput<'_> {
                 }
                 current_line.push(ch);
             }
-            char_count += 1;
         }
 
         // Cursor at the end

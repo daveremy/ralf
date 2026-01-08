@@ -468,7 +468,7 @@ async fn run_loop(
 
     let start_time = Instant::now();
     let max_iterations = max_iterations.unwrap_or(100);
-    let max_duration = max_seconds.map(|s| Duration::from_secs(u64::from(s)));
+    let max_duration = max_seconds.map(Duration::from_secs);
 
     println!("Prompt hash: {}", &prompt_hash[..8]);
     println!("Max iterations: {max_iterations}");

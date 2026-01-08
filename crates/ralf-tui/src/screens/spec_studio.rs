@@ -51,8 +51,7 @@ impl Screen for SpecStudioScreen {
         // Render status bar
         let model_name = app
             .current_chat_model()
-            .map(|m| m.info.name.as_str())
-            .unwrap_or("none");
+            .map_or("none", |m| m.info.name.as_str());
 
         let hints = vec![
             KeyHint::new("Enter", "Send"),
@@ -132,7 +131,7 @@ fn render_transcript(app: &App, area: Rect, buf: &mut Buffer) {
             // First line has prefix, then render content with markdown
             let first_md = render_markdown_line(first);
             let mut spans = vec![Span::styled(format!("{prefix}: "), style)];
-            spans.extend(first_md.spans.into_iter().map(|s| s.to_owned()));
+            spans.extend(first_md.spans);
             lines.push(Line::from(spans));
             last_was_blank = false;
         }
@@ -146,7 +145,7 @@ fn render_transcript(app: &App, area: Rect, buf: &mut Buffer) {
             let md_line = render_markdown_line(line);
             // Add indent to the first span
             let mut spans: Vec<Span<'_>> = vec![Span::raw("  ")];
-            spans.extend(md_line.spans.into_iter().map(|s| s.to_owned()));
+            spans.extend(md_line.spans);
             lines.push(Line::from(spans));
             last_was_blank = is_blank;
         }

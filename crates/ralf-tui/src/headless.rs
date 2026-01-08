@@ -170,7 +170,7 @@ impl Default for HeadlessConfig {
 /// handle.send_action(Action::Quit);
 /// task.await.unwrap();
 /// ```
-pub async fn run_tui_headless(
+pub fn run_tui_headless(
     repo_path: &Path,
     config: HeadlessConfig,
 ) -> (HeadlessHandle, JoinHandle<Result<(), String>>) {
@@ -193,6 +193,7 @@ pub async fn run_tui_headless(
     (handle, task)
 }
 
+#[allow(clippy::too_many_lines)]
 async fn run_headless_loop(
     repo_path: std::path::PathBuf,
     config: HeadlessConfig,
@@ -325,7 +326,7 @@ async fn run_headless_loop(
         // Wait for action or tick
         let action = tokio::select! {
             Some(action) = action_rx.recv() => action,
-            _ = tokio::time::sleep(tick_duration) => Action::None,
+            () = tokio::time::sleep(tick_duration) => Action::None,
         };
 
         // Handle action

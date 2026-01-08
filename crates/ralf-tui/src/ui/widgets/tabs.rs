@@ -97,9 +97,9 @@ pub fn tab_indicator(titles: &[&str], selected: usize) -> Vec<Span<'static>> {
             spans.push(Span::raw(" "));
         }
         if i == selected {
-            spans.push(Span::styled(format!("[{}]", title), Styles::highlight()));
+            spans.push(Span::styled(format!("[{title}]"), Styles::highlight()));
         } else {
-            spans.push(Span::styled(format!(" {} ", title), Styles::dim()));
+            spans.push(Span::styled(format!(" {title} "), Styles::dim()));
         }
     }
     spans

@@ -74,6 +74,7 @@ pub async fn run_tui(repo_path: &Path) -> Result<(), Box<dyn std::error::Error>>
     result
 }
 
+#[allow(clippy::too_many_lines)]
 async fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
@@ -158,10 +159,11 @@ async fn run_loop(
             match event {
                 Event::Key(key) => {
                     // Special handling for SpecStudio text input
-                    if app.screen == app::Screen::SpecStudio && !app.chat_in_progress {
-                        if handle_spec_studio_key(app, key, &mut chat_handles).await {
-                            continue; // Key was handled by text input
-                        }
+                    if app.screen == app::Screen::SpecStudio
+                        && !app.chat_in_progress
+                        && handle_spec_studio_key(app, key, &mut chat_handles)
+                    {
+                        continue; // Key was handled by text input
                     }
                     let action = event::key_to_action(key);
                     app.handle_action(action);
@@ -225,9 +227,9 @@ async fn run_loop(
     Ok(())
 }
 
-/// Handle key input for SpecStudio text input.
+/// Handle key input for `SpecStudio` text input.
 /// Returns true if the key was handled (should not be processed as action).
-async fn handle_spec_studio_key(
+fn handle_spec_studio_key(
     app: &mut App,
     key: crossterm::event::KeyEvent,
     chat_handles: &mut Vec<
@@ -248,26 +250,23 @@ async fn handle_spec_studio_key(
     }
 
     match key.code {
-        // Special keys that should be handled as actions
-        KeyCode::Esc | KeyCode::Tab => false,
-
         // Enter sends the message
         KeyCode::Enter => {
             if !app.input_state.is_empty() {
-                let content = app.input_state.submit();
-                app.add_user_message(content);
+                let user_input = app.input_state.submit();
+                app.add_user_message(user_input);
 
                 // Start chat request
                 if let Some(model_status) = app.current_chat_model() {
                     let model_config =
                         ralf_engine::ModelConfig::default_for(&model_status.info.name);
-                    let context = app.thread.to_context();
+                    let chat_context = app.thread.to_context();
 
                     app.chat_in_progress = true;
 
                     // Use tokio::spawn for async function (not spawn_blocking)
                     let handle = tokio::spawn(async move {
-                        ralf_engine::invoke_chat(&model_config, &context, 300).await
+                        ralf_engine::invoke_chat(&model_config, &chat_context, 300).await
                     });
                     chat_handles.push(handle);
                 }

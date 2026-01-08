@@ -82,11 +82,11 @@ pub struct RunState {
     pub started_at: Option<Instant>,
     /// Model output (preview).
     pub model_output: String,
-    /// Verifier results: (name, passed, duration_ms).
+    /// Verifier results: (name, passed, `duration_ms`).
     pub verifier_results: Vec<(String, bool, u64)>,
-    /// Active cooldowns: (model, remaining_secs).
+    /// Active cooldowns: (model, `remaining_secs`).
     pub cooldowns: Vec<(String, u64)>,
-    /// Event log messages (bounded to MAX_EVENTS).
+    /// Event log messages (bounded to `MAX_EVENTS`).
     pub events: VecDeque<String>,
     /// Scroll offset for output.
     pub output_scroll: usize,
@@ -526,7 +526,7 @@ impl App {
     /// Save the configuration and update app state.
     ///
     /// Note: This performs blocking file I/O, but config files are small (<1KB)
-    /// so the brief block is acceptable. Using spawn_blocking would require
+    /// so the brief block is acceptable. Using `spawn_blocking` would require
     /// async/channel complexity that isn't worth it for this use case.
     pub fn save_config(&mut self) {
         let enabled_model_names: Vec<String> = self
@@ -788,11 +788,12 @@ impl App {
     /// Export transcript to a markdown file.
     fn export_transcript(&mut self) {
         use ralf_engine::Role;
+        use std::fmt::Write;
 
         let mut content = String::new();
         content.push_str("# Spec Studio Transcript\n\n");
-        content.push_str(&format!("Thread: {}\n", self.thread.title));
-        content.push_str(&format!("Thread ID: {}\n\n", self.thread.id));
+        let _ = writeln!(content, "Thread: {}", self.thread.title);
+        let _ = writeln!(content, "Thread ID: {}\n", self.thread.id);
         content.push_str("---\n\n");
 
         for msg in &self.thread.messages {
@@ -807,7 +808,7 @@ impl App {
                 }
                 Role::System => "**System**",
             };
-            content.push_str(&format!("### {}\n\n", role));
+            let _ = writeln!(content, "### {role}\n");
             content.push_str(&msg.content);
             content.push_str("\n\n");
         }
@@ -927,6 +928,7 @@ impl App {
     }
 
     /// Handle a single run event.
+    #[allow(clippy::too_many_lines)]
     fn handle_run_event(&mut self, event: RunEvent) {
         match event {
             RunEvent::Started {
@@ -976,10 +978,8 @@ impl App {
                 } else {
                     "no promise"
                 };
-                self.run_state.push_event(format!(
-                    "Model {} completed ({}ms) - {}",
-                    model, duration_ms, status
-                ));
+                self.run_state
+                    .push_event(format!("Model {model} completed ({duration_ms}ms) - {status}"));
 
                 // Note: git info is updated at run start, not after each model
                 // to avoid blocking the event loop with shell commands

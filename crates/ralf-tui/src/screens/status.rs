@@ -179,7 +179,7 @@ fn render_header(app: &App, area: Rect, buf: &mut Buffer) {
             .run_state
             .cooldowns
             .iter()
-            .map(|(m, s)| format!("{}:{}s", m, s))
+            .map(|(m, s)| format!("{m}:{s}s"))
             .collect();
         line2_spans.push(Span::styled(
             cooldown_text.join(", "),
@@ -267,7 +267,7 @@ fn colorize_output_line(line: &str) -> Line<'_> {
         Line::from(Span::styled(line, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)))
     } else if trimmed.starts_with("✓") || trimmed.contains("success") || trimmed.contains("passed") {
         Line::from(Span::styled(line, Style::default().fg(Color::Green)))
-    } else if trimmed.starts_with("•") || trimmed.starts_with("-") || trimmed.starts_with("*") {
+    } else if trimmed.starts_with('•') || trimmed.starts_with('-') || trimmed.starts_with('*') {
         Line::from(Span::styled(line, Style::default().fg(Color::White)))
     } else {
         Line::from(Span::raw(line))
@@ -315,9 +315,12 @@ fn colorize_event(event: &str) -> Line<'_> {
         Style::default().fg(Color::Green)
     } else if event.contains("Failed") || event.contains("failed") || event.contains("FAIL") {
         Style::default().fg(Color::Red)
-    } else if event.contains("Cancelled") || event.contains("cancelled") || event.contains("Cancel") {
-        Style::default().fg(Color::Yellow)
-    } else if event.contains("cooldown") || event.contains("Cooldown") {
+    } else if event.contains("Cancelled")
+        || event.contains("cancelled")
+        || event.contains("Cancel")
+        || event.contains("cooldown")
+        || event.contains("Cooldown")
+    {
         Style::default().fg(Color::Yellow)
     } else if event.contains("Rate") || event.contains("rate") {
         Style::default().fg(Color::Magenta)
@@ -400,14 +403,13 @@ fn render_git_pane(app: &App, area: Rect, buf: &mut Buffer) {
         let max_files = (inner.height as usize).saturating_sub(1);
         for file in app.git_info.changed_files.iter().take(max_files) {
             // Color based on file extension
-            let style = if file.ends_with(".rs") {
-                Style::default().fg(Color::Cyan)
-            } else if file.ends_with(".md") || file.ends_with(".txt") {
-                Style::default().fg(Color::Green)
-            } else if file.ends_with(".json") || file.ends_with(".toml") {
-                Style::default().fg(Color::Yellow)
-            } else {
-                Style::default().fg(Color::White)
+            let path = std::path::Path::new(file);
+            let ext = path.extension().and_then(|e| e.to_str());
+            let style = match ext {
+                Some("rs") => Style::default().fg(Color::Cyan),
+                Some("md" | "txt") => Style::default().fg(Color::Green),
+                Some("json" | "toml") => Style::default().fg(Color::Yellow),
+                _ => Style::default().fg(Color::White),
             };
             lines.push(Line::from(Span::styled(format!(" {file}"), style)));
         }
