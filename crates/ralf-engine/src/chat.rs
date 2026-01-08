@@ -93,6 +93,8 @@ impl ChatContext {
 
     /// Build the prompt to send to the model.
     pub fn build_prompt(&self) -> String {
+        use std::fmt::Write;
+
         let mut prompt = String::new();
 
         // System instructions
@@ -111,14 +113,14 @@ impl ChatContext {
         for msg in &self.messages {
             match msg.role {
                 Role::System => {
-                    prompt.push_str(&format!("[System]: {}\n\n", msg.content));
+                    let _ = write!(prompt, "[System]: {}\n\n", msg.content);
                 }
                 Role::User => {
-                    prompt.push_str(&format!("User: {}\n\n", msg.content));
+                    let _ = write!(prompt, "User: {}\n\n", msg.content);
                 }
                 Role::Assistant => {
                     let model = msg.model.as_deref().unwrap_or("assistant");
-                    prompt.push_str(&format!("{}: {}\n\n", model, msg.content));
+                    let _ = write!(prompt, "{}: {}\n\n", model, msg.content);
                 }
             }
         }
@@ -277,15 +279,15 @@ pub async fn invoke_chat(
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
             // Use stdout if available, otherwise stderr (some CLIs output to stderr)
-            let content = if !stdout.trim().is_empty() {
-                stdout
-            } else {
+            let response = if stdout.trim().is_empty() {
                 stderr
+            } else {
+                stdout
             };
 
             Ok(ChatResult {
                 model: model.name.clone(),
-                content,
+                content: response,
                 duration_ms,
                 has_draft_update: false, // Could be detected with heuristics later
             })
@@ -362,6 +364,8 @@ impl Thread {
 
     /// Save thread to a JSONL file.
     pub fn save(&self, spec_dir: &Path) -> Result<(), ChatError> {
+        use std::io::Write;
+
         let threads_dir = spec_dir.join("threads");
         std::fs::create_dir_all(&threads_dir).map_err(ChatError::Io)?;
 
@@ -377,7 +381,6 @@ impl Thread {
             updated_at: self.updated_at,
         };
         let meta_json = serde_json::to_string(&metadata).map_err(ChatError::Serialize)?;
-        use std::io::Write;
         writeln!(file, "{meta_json}").map_err(ChatError::Io)?;
 
         // Write each message
@@ -483,6 +486,65 @@ pub fn extract_draft_promise(draft: &str) -> Option<String> {
         .map(|m| m.as_str().to_string())
 }
 
+/// Extract the spec/draft portion from an assistant response.
+///
+/// Looks for content between `---` markers that contains markdown spec structure,
+/// or falls back to extracting the markdown portion starting with a `#` header.
+pub fn extract_spec_from_response(response: &str) -> Option<String> {
+    // First, try to find content between --- markers
+    let parts: Vec<&str> = response.split("---").collect();
+
+    if parts.len() >= 3 {
+        // Content between first and second --- markers
+        let between = parts[1].trim();
+        // Check if it looks like a spec (has headers)
+        if between.contains("# ") || between.starts_with('#') {
+            return Some(between.to_string());
+        }
+    }
+
+    // Fallback: find the first markdown header and extract from there
+    // Look for a line starting with "# " (title) and extract until we hit
+    // another "---" or conversational text
+    let lines: Vec<&str> = response.lines().collect();
+    let mut in_spec = false;
+    let mut spec_lines = Vec::new();
+
+    for line in lines {
+        let trimmed = line.trim();
+
+        // Start capturing when we see a markdown title
+        if !in_spec && trimmed.starts_with("# ") {
+            in_spec = true;
+        }
+
+        if in_spec {
+            // Stop if we hit end markers
+            if trimmed == "---" {
+                // Check if we already have content
+                if !spec_lines.is_empty() {
+                    break;
+                }
+                // Otherwise skip this marker (it's the opening one)
+                continue;
+            }
+
+            spec_lines.push(line);
+        }
+    }
+
+    if spec_lines.is_empty() {
+        return None;
+    }
+
+    // Trim trailing empty lines
+    while spec_lines.last().is_some_and(|l| l.trim().is_empty()) {
+        spec_lines.pop();
+    }
+
+    Some(spec_lines.join("\n"))
+}
+
 /// Errors that can occur in chat operations.
 #[derive(Debug, thiserror::Error)]
 pub enum ChatError {
@@ -559,5 +621,41 @@ mod tests {
             Some("DONE".into())
         );
         assert_eq!(extract_draft_promise("No promise"), None);
+    }
+
+    #[test]
+    fn test_extract_spec_from_response() {
+        // Test with --- delimited spec
+        let response = r#"Here's a draft:
+
+---
+
+# My Tool
+
+## Goal
+Build something cool.
+
+## Completion Criteria
+- [ ] Works
+
+---
+
+What do you think?"#;
+
+        let spec = extract_spec_from_response(response).unwrap();
+        assert!(spec.starts_with("# My Tool"));
+        assert!(spec.contains("## Goal"));
+        assert!(spec.contains("## Completion Criteria"));
+        assert!(!spec.contains("Here's a draft")); // No conversational text
+        assert!(!spec.contains("What do you think")); // No trailing text
+
+        // Test with spec starting with # but no delimiters
+        let response2 = "Let me help!\n\n# Simple Spec\n\n## Goal\nDo stuff.\n\nLet me know!";
+        let spec2 = extract_spec_from_response(response2).unwrap();
+        assert!(spec2.starts_with("# Simple Spec"));
+
+        // Test with no spec
+        let response3 = "Just a regular message without any spec.";
+        assert!(extract_spec_from_response(response3).is_none());
     }
 }

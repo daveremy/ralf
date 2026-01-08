@@ -3,6 +3,15 @@
 //! This module implements the main iteration loop, model invocation,
 //! and verification.
 
+// TODO: Fix these clippy lints in a dedicated cleanup PR
+#![allow(clippy::single_match_else)]
+#![allow(clippy::match_same_arms)]
+#![allow(clippy::if_not_else)]
+#![allow(clippy::map_unwrap_or)]
+#![allow(clippy::format_push_string)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::ignored_unit_patterns)]
+
 use crate::config::{Config, ModelConfig, ModelSelection, VerifierConfig};
 use crate::state::{Cooldowns, RunState};
 use regex::Regex;
@@ -42,6 +51,18 @@ pub enum RunEvent {
         passed: bool,
         duration_ms: u64,
     },
+    /// AI verification of completion criteria started.
+    VerificationStarted {
+        iteration: usize,
+        model: String,
+        criteria_count: usize,
+    },
+    /// A single criterion was verified.
+    CriterionVerified {
+        index: usize,
+        passed: bool,
+        reason: Option<String>,
+    },
     /// Model entered cooldown.
     CooldownStarted { model: String, duration_secs: u64 },
     /// Iteration completed.
@@ -70,6 +91,8 @@ pub struct RunConfig {
     pub prompt_path: PathBuf,
     /// Repository path.
     pub repo_path: PathBuf,
+    /// Parsed completion criteria from prompt.
+    pub criteria: Vec<String>,
 }
 
 /// Handle for controlling a running loop.
@@ -303,19 +326,56 @@ async fn run_loop(
             continue;
         }
 
-        // Complete if promise found
-        // Note: AI-powered criteria verification will be added in a future milestone
+        // Check for completion promise and verify criteria
         if result.has_promise {
-            let _ = event_tx.send(RunEvent::IterationCompleted {
-                iteration,
-                all_verifiers_passed: true, // Assuming success for now
-            });
+            // If there are criteria to verify, run AI verification
+            if !run_config.criteria.is_empty() {
+                // Run verification with cancel check
+                let verification_results = tokio::select! {
+                    _ = cancel_rx.recv() => {
+                        let _ = event_tx.send(RunEvent::Cancelled { iteration });
+                        return;
+                    }
+                    results = verify_criteria(
+                        &config,
+                        &run_config.criteria,
+                        &result.stdout,
+                        &run_dir,
+                        &mut state,
+                        &cooldowns,
+                        &event_tx,
+                        iteration,
+                    ) => results
+                };
 
-            let _ = event_tx.send(RunEvent::Completed {
-                iteration,
-                reason: "Promise fulfilled".into(),
-            });
-            break;
+                let all_passed = verification_results.iter().all(|r| r.passed);
+
+                let _ = event_tx.send(RunEvent::IterationCompleted {
+                    iteration,
+                    all_verifiers_passed: all_passed,
+                });
+
+                if all_passed {
+                    let _ = event_tx.send(RunEvent::Completed {
+                        iteration,
+                        reason: "All criteria verified".into(),
+                    });
+                    break;
+                }
+                // Criteria failed - continue to next iteration
+            } else {
+                // No criteria to verify, complete immediately
+                let _ = event_tx.send(RunEvent::IterationCompleted {
+                    iteration,
+                    all_verifiers_passed: true,
+                });
+
+                let _ = event_tx.send(RunEvent::Completed {
+                    iteration,
+                    reason: "Promise fulfilled (no criteria to verify)".into(),
+                });
+                break;
+            }
         } else {
             let _ = event_tx.send(RunEvent::IterationCompleted {
                 iteration,
@@ -636,6 +696,233 @@ pub struct GitInfo {
     pub changed_files: Vec<String>,
 }
 
+/// Result of verifying a single criterion.
+#[derive(Debug, Clone)]
+pub struct CriterionResult {
+    /// Criterion index (0-based).
+    pub index: usize,
+    /// Whether the criterion passed.
+    pub passed: bool,
+    /// Reason for the result (especially for failures).
+    pub reason: Option<String>,
+}
+
+/// Get git diff output for verification context.
+fn get_git_diff(max_chars: usize) -> String {
+    std::process::Command::new("git")
+        .args(["diff", "HEAD"])
+        .output()
+        .ok()
+        .map(|o| {
+            let diff = String::from_utf8_lossy(&o.stdout).to_string();
+            if diff.len() > max_chars {
+                format!("{}...[truncated]", &diff[..max_chars])
+            } else {
+                diff
+            }
+        })
+        .unwrap_or_else(|| "(no diff available)".into())
+}
+
+/// Build a prompt for the verifier model.
+fn build_verifier_prompt(
+    criteria: &[String],
+    git_info: &GitInfo,
+    git_diff: &str,
+    model_output: &str,
+) -> String {
+    let mut prompt = String::new();
+
+    prompt.push_str("You are verifying completion criteria for a coding task.\n\n");
+
+    prompt.push_str("## Criteria to Verify\n");
+    for (i, criterion) in criteria.iter().enumerate() {
+        prompt.push_str(&format!("{}. {}\n", i + 1, criterion));
+    }
+    prompt.push('\n');
+
+    prompt.push_str("## Repository State\n");
+    prompt.push_str(&format!("Branch: {}\n", git_info.branch));
+    prompt.push_str(&format!(
+        "Changed files: {}\n\n",
+        if git_info.changed_files.is_empty() {
+            "(none)".to_string()
+        } else {
+            git_info.changed_files.join(", ")
+        }
+    ));
+
+    prompt.push_str("## Git Diff\n```\n");
+    prompt.push_str(git_diff);
+    prompt.push_str("\n```\n\n");
+
+    if !model_output.is_empty() {
+        prompt.push_str("## Recent Model Output (excerpt)\n```\n");
+        // Truncate model output to avoid context overflow
+        let max_output = 2000;
+        if model_output.len() > max_output {
+            prompt.push_str(&model_output[..max_output]);
+            prompt.push_str("\n...[truncated]");
+        } else {
+            prompt.push_str(model_output);
+        }
+        prompt.push_str("\n```\n\n");
+    }
+
+    prompt.push_str("## Task\n");
+    prompt.push_str("For each criterion above, determine if it is satisfied based on the repository state.\n");
+    prompt.push_str("Respond with EXACTLY this format for each criterion:\n\n");
+    prompt.push_str("CRITERION 1: PASS\n");
+    prompt.push_str("CRITERION 2: FAIL - reason why it failed\n");
+    prompt.push_str("...\n\n");
+    prompt.push_str("Be strict: only mark PASS if you can verify the criterion is definitely met.\n");
+
+    prompt
+}
+
+/// Parse verification response to extract PASS/FAIL for each criterion.
+fn parse_verification_response(response: &str, criteria_count: usize) -> Vec<CriterionResult> {
+    let mut results = Vec::with_capacity(criteria_count);
+
+    // Initialize all as failed (default if not found in response)
+    for i in 0..criteria_count {
+        results.push(CriterionResult {
+            index: i,
+            passed: false,
+            reason: Some("No result found in verifier response".into()),
+        });
+    }
+
+    // Robust regex pattern that handles:
+    // - Markdown formatting: **CRITERION 1**: PASS
+    // - Optional hash: CRITERION #1: PASS
+    // - Whitespace variations: CRITERION  1 : PASS
+    // - Case insensitivity: criterion 1: pass
+    let re = Regex::new(r"(?i)(?:\*\*)?CRITERION\s*#?(\d+)(?:\*\*)?[:\s]+(PASS|FAIL)(.*)$")
+        .expect("Invalid regex pattern");
+
+    for line in response.lines() {
+        if let Some(caps) = re.captures(line) {
+            let num: usize = caps[1].parse().unwrap_or(0);
+            let idx = num.saturating_sub(1); // Convert to 0-based
+
+            if idx < criteria_count {
+                let passed = caps[2].eq_ignore_ascii_case("PASS");
+                let reason = if passed {
+                    None
+                } else {
+                    // Extract and clean up the reason (everything after PASS/FAIL)
+                    let raw_reason = caps.get(3).map(|m| m.as_str()).unwrap_or("");
+                    let cleaned = raw_reason
+                        .trim()
+                        .trim_start_matches(['-', ':', ' ', '*'])
+                        .trim();
+                    if cleaned.is_empty() {
+                        None
+                    } else {
+                        Some(cleaned.to_string())
+                    }
+                };
+
+                results[idx] = CriterionResult {
+                    index: idx,
+                    passed,
+                    reason,
+                };
+            }
+        }
+    }
+
+    results
+}
+
+/// Verify completion criteria using an AI model.
+///
+/// Returns a vector of results for each criterion.
+pub async fn verify_criteria(
+    config: &Config,
+    criteria: &[String],
+    model_output: &str,
+    run_dir: &Path,
+    state: &mut RunState,
+    cooldowns: &Cooldowns,
+    event_tx: &mpsc::UnboundedSender<RunEvent>,
+    iteration: usize,
+) -> Vec<CriterionResult> {
+    // Select a verifier model (prefer different from the one that just ran)
+    let verifier = match select_model(config, cooldowns, state) {
+        Some(m) => m.clone(),
+        None => {
+            // No models available, fail all criteria
+            return criteria
+                .iter()
+                .enumerate()
+                .map(|(i, _)| CriterionResult {
+                    index: i,
+                    passed: false,
+                    reason: Some("No verifier model available".into()),
+                })
+                .collect();
+        }
+    };
+
+    // Emit verification started event
+    let _ = event_tx.send(RunEvent::VerificationStarted {
+        iteration,
+        model: verifier.name.clone(),
+        criteria_count: criteria.len(),
+    });
+
+    // Gather context
+    let git_info = get_git_info();
+    let git_diff = get_git_diff(4000);
+
+    // Build verifier prompt
+    let prompt = build_verifier_prompt(criteria, &git_info, &git_diff, model_output);
+
+    // Invoke verifier model
+    let result = match invoke_model(&verifier, &prompt, run_dir).await {
+        Ok(r) => r,
+        Err(e) => {
+            // Verifier failed, fail all criteria
+            let results: Vec<CriterionResult> = criteria
+                .iter()
+                .enumerate()
+                .map(|(i, _)| CriterionResult {
+                    index: i,
+                    passed: false,
+                    reason: Some(format!("Verifier error: {e}")),
+                })
+                .collect();
+
+            // Emit events for each failed criterion
+            for r in &results {
+                let _ = event_tx.send(RunEvent::CriterionVerified {
+                    index: r.index,
+                    passed: r.passed,
+                    reason: r.reason.clone(),
+                });
+            }
+
+            return results;
+        }
+    };
+
+    // Parse the response
+    let results = parse_verification_response(&result.stdout, criteria.len());
+
+    // Emit events for each criterion
+    for r in &results {
+        let _ = event_tx.send(RunEvent::CriterionVerified {
+            index: r.index,
+            passed: r.passed,
+            reason: r.reason.clone(),
+        });
+    }
+
+    results
+}
+
 /// Errors that can occur during running.
 #[derive(Debug, thiserror::Error)]
 pub enum RunnerError {
@@ -730,5 +1017,83 @@ mod tests {
 
         // Models should be different (round-robin working)
         assert_ne!(model1.unwrap().name, model2.unwrap().name);
+    }
+
+    #[test]
+    fn test_parse_verification_response_all_pass() {
+        let response = r#"
+CRITERION 1: PASS
+CRITERION 2: PASS
+CRITERION 3: PASS
+"#;
+        let results = parse_verification_response(response, 3);
+        assert_eq!(results.len(), 3);
+        assert!(results[0].passed);
+        assert!(results[1].passed);
+        assert!(results[2].passed);
+    }
+
+    #[test]
+    fn test_parse_verification_response_mixed() {
+        let response = r#"
+Looking at the criteria:
+CRITERION 1: PASS
+CRITERION 2: FAIL - file not found
+CRITERION 3: PASS
+"#;
+        let results = parse_verification_response(response, 3);
+        assert_eq!(results.len(), 3);
+        assert!(results[0].passed);
+        assert!(!results[1].passed);
+        assert_eq!(results[1].reason.as_deref(), Some("file not found"));
+        assert!(results[2].passed);
+    }
+
+    #[test]
+    fn test_parse_verification_response_missing_criterion() {
+        let response = r#"
+CRITERION 1: PASS
+CRITERION 3: PASS
+"#;
+        let results = parse_verification_response(response, 3);
+        assert_eq!(results.len(), 3);
+        assert!(results[0].passed);
+        // Criterion 2 is missing, should default to failed
+        assert!(!results[1].passed);
+        assert!(results[2].passed);
+    }
+
+    #[test]
+    fn test_parse_verification_response_case_insensitive() {
+        let response = "criterion 1: pass\nCRITERION 2: FAIL";
+        let results = parse_verification_response(response, 2);
+        assert!(results[0].passed);
+        assert!(!results[1].passed);
+    }
+
+    #[test]
+    fn test_parse_verification_response_markdown_formatting() {
+        // Test markdown bold formatting that models often add
+        let response = r#"
+**CRITERION 1**: PASS
+**CRITERION 2**: FAIL - Missing test coverage
+CRITERION #3: PASS
+criterion  4 : fail - file not found
+"#;
+        let results = parse_verification_response(response, 4);
+        assert!(results[0].passed, "Criterion 1 should pass (markdown bold)");
+        assert!(!results[1].passed, "Criterion 2 should fail");
+        assert_eq!(
+            results[1].reason.as_deref(),
+            Some("Missing test coverage"),
+            "Should extract reason from markdown"
+        );
+        assert!(results[2].passed, "Criterion 3 should pass (with #)");
+        assert!(!results[3].passed, "Criterion 4 should fail");
+        assert_eq!(
+            results[3].reason.as_deref(),
+            Some("file not found"),
+            "Should extract reason with extra whitespace"
+        );
     }
 }

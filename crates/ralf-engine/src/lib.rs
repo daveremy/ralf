@@ -14,12 +14,13 @@ pub mod config;
 pub mod discovery;
 pub mod runner;
 pub mod state;
+pub mod thread;
 
 // Re-export commonly used types
 pub use changelog::{write_changelog_entry, ChangelogEntry, ChangelogError, IterationStatus};
 pub use chat::{
-    draft_has_promise, extract_draft_promise, invoke_chat, save_draft_snapshot, ChatContext,
-    ChatError, ChatMessage, ChatResult, Role, Thread,
+    draft_has_promise, extract_draft_promise, extract_spec_from_response, invoke_chat,
+    save_draft_snapshot, ChatContext, ChatError, ChatMessage, ChatResult, Role, Thread,
 };
 pub use config::{Config, ConfigError, ModelConfig, ModelSelection, VerifierConfig};
 pub use discovery::{
@@ -41,6 +42,7 @@ pub fn engine_version() -> &'static str {
 ///
 /// Looks for sections named "Requirements", "Completion Criteria", "Criteria",
 /// or "Acceptance Criteria" and extracts bullet points from them.
+#[allow(clippy::manual_map)]
 pub fn parse_criteria(prompt: &str) -> Vec<String> {
     let mut criteria = Vec::new();
     let mut in_criteria_section = false;
