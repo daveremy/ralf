@@ -110,6 +110,10 @@ impl GitSafety {
     /// Validate that a thread_id is safe for use in branch names.
     /// Only allows: alphanumeric, dash, underscore.
     pub fn validate_thread_id(thread_id: &str) -> Result<(), GitError>;
+
+    /// Validate that a commit SHA is a valid 40-character hex string.
+    /// Prevents option injection in commands that take a commit reference.
+    pub fn validate_commit_sha(sha: &str) -> Result<(), GitError>;
 }
 ```
 
@@ -136,7 +140,7 @@ impl GitSafety {
 | `create_thread_branch` | `git branch -- ralf/<id>` |
 | `thread_branch_exists` | `git show-ref --verify --quiet refs/heads/ralf/<id>` |
 | `delete_thread_branch` | `git branch -D -- ralf/<id>` |
-| `checkout` | `git switch <branch>` |
+| `checkout` | `git switch -- <branch>` |
 | `reset_hard` | `git reset --hard <sha>` |
 | `diff_from_baseline` | `git diff <sha>` (includes uncommitted work) |
 | `diff_stat` | `git diff --stat <sha>` |
@@ -157,6 +161,10 @@ impl GitSafety {
 - [ ] `create_thread_branch()` fails with `InvalidName` for invalid thread IDs
 - [ ] `validate_thread_id()` accepts alphanumeric, dash, underscore characters
 - [ ] `validate_thread_id()` rejects invalid characters (spaces, slashes, etc.)
+- [ ] `validate_commit_sha()` accepts valid 40-character hex SHAs
+- [ ] `validate_commit_sha()` rejects invalid SHAs (wrong length, non-hex, option-like)
+- [ ] `reset_hard()` validates commit SHA before executing
+- [ ] `diff_from_baseline()` and `diff_stat()` validate commit SHA
 - [ ] `thread_branch_exists()` correctly detects branch presence
 - [ ] `delete_thread_branch()` removes the branch
 - [ ] `checkout()` switches to the specified branch

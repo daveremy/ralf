@@ -170,6 +170,25 @@ impl GitSafety {
         Ok(())
     }
 
+    /// Validate that a commit SHA is a valid 40-character hex string.
+    /// Prevents option injection in commands that take a commit reference.
+    pub fn validate_commit_sha(sha: &str) -> Result<(), GitError> {
+        if sha.len() != 40 {
+            return Err(GitError::InvalidName(format!(
+                "commit SHA must be 40 characters, got {}",
+                sha.len()
+            )));
+        }
+
+        if !sha.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(GitError::InvalidName(
+                "commit SHA must contain only hex characters".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
     /// Create a thread branch: `ralf/<thread-id>`
     /// Validates `thread_id` contains only safe characters (alphanumeric, dash, underscore).
     /// Fails if branch already exists or `thread_id` is invalid.
@@ -263,9 +282,10 @@ impl GitSafety {
         self.ensure_repo()?;
 
         // Use git switch for branch checkout (safer than checkout)
-        // Falls back to checkout if switch is not available
+        // Use -- separator to prevent option injection if branch starts with -
         let output = Command::new("git")
             .arg("switch")
+            .arg("--")
             .arg(branch)
             .current_dir(&self.repo_path)
             .output()
@@ -285,6 +305,7 @@ impl GitSafety {
     /// NOTE: Does NOT remove untracked files. Use with user confirmation.
     pub fn reset_hard(&self, commit_sha: &str) -> Result<(), GitError> {
         self.ensure_repo()?;
+        Self::validate_commit_sha(commit_sha)?;
 
         let output = Command::new("git")
             .arg("reset")
@@ -316,6 +337,7 @@ impl GitSafety {
     /// Get diff from baseline to current working tree (includes uncommitted).
     pub fn diff_from_baseline(&self, baseline: &GitBaseline) -> Result<String, GitError> {
         self.ensure_repo()?;
+        Self::validate_commit_sha(&baseline.commit_sha)?;
 
         let output = Command::new("git")
             .arg("diff")
@@ -336,6 +358,7 @@ impl GitSafety {
     /// Get short diff stats (files changed, insertions, deletions).
     pub fn diff_stat(&self, baseline: &GitBaseline) -> Result<String, GitError> {
         self.ensure_repo()?;
+        Self::validate_commit_sha(&baseline.commit_sha)?;
 
         let output = Command::new("git")
             .arg("diff")
@@ -540,6 +563,67 @@ mod tests {
             GitSafety::validate_thread_id("has.dot"),
             Err(GitError::InvalidName(_))
         ));
+    }
+
+    #[test]
+    fn test_validate_commit_sha_valid() {
+        // Valid 40-char hex SHA
+        let valid_sha = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2";
+        assert!(GitSafety::validate_commit_sha(valid_sha).is_ok());
+
+        // All lowercase hex
+        let lower_sha = "0123456789abcdef0123456789abcdef01234567";
+        assert!(GitSafety::validate_commit_sha(lower_sha).is_ok());
+
+        // Mixed case hex
+        let mixed_sha = "0123456789ABCDEF0123456789abcdef01234567";
+        assert!(GitSafety::validate_commit_sha(mixed_sha).is_ok());
+    }
+
+    #[test]
+    fn test_validate_commit_sha_invalid() {
+        // Too short
+        assert!(matches!(
+            GitSafety::validate_commit_sha("abc123"),
+            Err(GitError::InvalidName(_))
+        ));
+
+        // Too long
+        assert!(matches!(
+            GitSafety::validate_commit_sha("a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3"),
+            Err(GitError::InvalidName(_))
+        ));
+
+        // Non-hex characters
+        assert!(matches!(
+            GitSafety::validate_commit_sha("g1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"),
+            Err(GitError::InvalidName(_))
+        ));
+
+        // Option injection attempt
+        assert!(matches!(
+            GitSafety::validate_commit_sha("--hard"),
+            Err(GitError::InvalidName(_))
+        ));
+
+        // Empty
+        assert!(matches!(
+            GitSafety::validate_commit_sha(""),
+            Err(GitError::InvalidName(_))
+        ));
+    }
+
+    #[test]
+    fn test_reset_hard_rejects_invalid_sha() {
+        let (_temp, git) = setup_test_repo();
+
+        // Should reject option-like values
+        let result = git.reset_hard("--hard");
+        assert!(matches!(result, Err(GitError::InvalidName(_))));
+
+        // Should reject short refs
+        let result = git.reset_hard("HEAD");
+        assert!(matches!(result, Err(GitError::InvalidName(_))));
     }
 
     #[test]
