@@ -1,9 +1,8 @@
 //! Screen definitions for the ralf TUI.
 
-pub mod run_dashboard;
-pub mod setup;
+pub mod settings;
 pub mod spec_studio;
-pub mod welcome;
+pub mod status;
 
 use crate::app::App;
 use ratatui::{buffer::Buffer, layout::Rect, widgets::Widget};

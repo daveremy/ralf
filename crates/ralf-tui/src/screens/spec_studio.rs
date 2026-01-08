@@ -9,6 +9,7 @@ use ralf_engine::Role;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget, Wrap},
 };
@@ -58,7 +59,7 @@ impl Screen for SpecStudioScreen {
             KeyHint::new("Tab", "Model"),
             KeyHint::new("Ctrl+E", "Export"),
             KeyHint::new("Ctrl+F", "Finalize"),
-            KeyHint::new("Esc", "Back"),
+            KeyHint::new("Esc", "Quit"),
         ];
         let mut status_bar = StatusBar::new("Spec Studio").hints(hints);
         if let Some(notification) = &app.notification {
@@ -113,6 +114,8 @@ fn render_transcript(app: &App, area: Rect, buf: &mut Buffer) {
     }
 
     let mut lines = Vec::new();
+    let mut last_was_blank = false;
+
     for msg in &app.thread.messages {
         let (prefix, style) = match msg.role {
             Role::User => ("You: ", Styles::highlight()),
@@ -126,19 +129,29 @@ fn render_transcript(app: &App, area: Rect, buf: &mut Buffer) {
         // Add prefix on first line
         let content_lines: Vec<&str> = msg.content.lines().collect();
         if let Some(first) = content_lines.first() {
-            lines.push(Line::from(vec![
-                Span::styled(format!("{prefix}: "), style),
-                Span::styled(*first, Styles::default()),
-            ]));
+            // First line has prefix, then render content with markdown
+            let first_md = render_markdown_line(first);
+            let mut spans = vec![Span::styled(format!("{prefix}: "), style)];
+            spans.extend(first_md.spans.into_iter().map(|s| s.to_owned()));
+            lines.push(Line::from(spans));
+            last_was_blank = false;
         }
-        // Add remaining lines with indent
+        // Add remaining lines with indent, with markdown styling
+        // Collapse consecutive blank lines
         for line in content_lines.iter().skip(1) {
-            lines.push(Line::from(Span::styled(
-                format!("  {line}"),
-                Styles::default(),
-            )));
+            let is_blank = line.trim().is_empty();
+            if is_blank && last_was_blank {
+                continue; // Skip consecutive blank lines
+            }
+            let md_line = render_markdown_line(line);
+            // Add indent to the first span
+            let mut spans: Vec<Span<'_>> = vec![Span::raw("  ")];
+            spans.extend(md_line.spans.into_iter().map(|s| s.to_owned()));
+            lines.push(Line::from(spans));
+            last_was_blank = is_blank;
         }
         lines.push(Line::from("")); // Blank line between messages
+        last_was_blank = true;
     }
 
     // Show loading indicator if chat in progress
@@ -193,13 +206,176 @@ fn render_draft(app: &App, area: Rect, buf: &mut Buffer) {
         .draft
         .lines()
         .skip(app.draft_scroll)
-        .map(|l| Line::from(Span::raw(l)))
+        .map(render_markdown_line)
         .collect();
 
     let paragraph = Paragraph::new(lines)
         .style(Styles::default())
         .wrap(Wrap { trim: false });
     paragraph.render(inner, buf);
+}
+
+/// Render a line of markdown with basic styling.
+fn render_markdown_line(line: &str) -> Line<'_> {
+    let trimmed = line.trim();
+
+    // Headers - render with color, but also parse inline markdown
+    if trimmed.starts_with("# ") {
+        let content = trimmed.strip_prefix("# ").unwrap_or(trimmed);
+        let mut spans = vec![Span::styled(
+            "# ",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )];
+        let inline = render_inline_markdown(content);
+        for span in inline.spans {
+            // Apply cyan color to non-styled spans
+            let new_span = if span.style == Style::default() {
+                Span::styled(span.content, Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+            } else {
+                span
+            };
+            spans.push(new_span);
+        }
+        return Line::from(spans);
+    }
+    if trimmed.starts_with("## ") {
+        let content = trimmed.strip_prefix("## ").unwrap_or(trimmed);
+        let mut spans = vec![Span::styled(
+            "## ",
+            Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
+        )];
+        let inline = render_inline_markdown(content);
+        for span in inline.spans {
+            let new_span = if span.style == Style::default() {
+                Span::styled(span.content, Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD))
+            } else {
+                span
+            };
+            spans.push(new_span);
+        }
+        return Line::from(spans);
+    }
+    if trimmed.starts_with("### ") || trimmed.starts_with("#### ") {
+        return Line::from(Span::styled(
+            line,
+            Style::default().fg(Color::Blue),
+        ));
+    }
+
+    // Checkboxes - replace with actual symbols and parse inline markdown
+    if trimmed.starts_with("- [ ]") || trimmed.starts_with("* [ ]") {
+        let content = trimmed
+            .strip_prefix("- [ ]")
+            .or_else(|| trimmed.strip_prefix("* [ ]"))
+            .unwrap_or("");
+        let mut spans = vec![Span::styled("☐ ", Style::default().fg(Color::Yellow))];
+        let inline = render_inline_markdown(content);
+        for span in inline.spans {
+            let new_span = if span.style == Style::default() {
+                Span::styled(span.content, Style::default().fg(Color::Yellow))
+            } else {
+                span
+            };
+            spans.push(new_span);
+        }
+        return Line::from(spans);
+    }
+    if trimmed.starts_with("- [x]") || trimmed.starts_with("- [X]")
+        || trimmed.starts_with("* [x]") || trimmed.starts_with("* [X]") {
+        let content = trimmed
+            .strip_prefix("- [x]")
+            .or_else(|| trimmed.strip_prefix("- [X]"))
+            .or_else(|| trimmed.strip_prefix("* [x]"))
+            .or_else(|| trimmed.strip_prefix("* [X]"))
+            .unwrap_or("");
+        let mut spans = vec![Span::styled("☑ ", Style::default().fg(Color::Green))];
+        let inline = render_inline_markdown(content);
+        for span in inline.spans {
+            let new_span = if span.style == Style::default() {
+                Span::styled(span.content, Style::default().fg(Color::Green))
+            } else {
+                span
+            };
+            spans.push(new_span);
+        }
+        return Line::from(spans);
+    }
+
+    // List items - parse inline markdown
+    if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+        let content = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+            .unwrap_or(trimmed);
+        let mut spans = vec![Span::styled("• ", Style::default().fg(Color::White))];
+        spans.extend(render_inline_markdown(content).spans);
+        return Line::from(spans);
+    }
+
+    // Inline bold/emphasis - parse and style
+    if line.contains("**") || line.contains('`') {
+        return render_inline_markdown(line);
+    }
+
+    Line::from(Span::raw(line))
+}
+
+/// Render inline markdown (bold, code) with styling.
+fn render_inline_markdown(line: &str) -> Line<'_> {
+    let mut spans = Vec::new();
+    let mut current = String::new();
+    let mut chars = line.chars().peekable();
+    let mut in_bold = false;
+    let mut in_code = false;
+
+    while let Some(ch) = chars.next() {
+        if ch == '*' && chars.peek() == Some(&'*') && !in_code {
+            // Toggle bold
+            chars.next(); // consume second *
+            if !current.is_empty() {
+                if in_bold {
+                    spans.push(Span::styled(
+                        std::mem::take(&mut current),
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ));
+                } else {
+                    spans.push(Span::raw(std::mem::take(&mut current)));
+                }
+            }
+            in_bold = !in_bold;
+        } else if ch == '`' && !in_bold {
+            // Toggle code
+            if !current.is_empty() {
+                if in_code {
+                    spans.push(Span::styled(
+                        std::mem::take(&mut current),
+                        Style::default().fg(Color::Magenta),
+                    ));
+                } else {
+                    spans.push(Span::raw(std::mem::take(&mut current)));
+                }
+            }
+            in_code = !in_code;
+        } else {
+            current.push(ch);
+        }
+    }
+
+    // Flush remaining
+    if !current.is_empty() {
+        if in_bold {
+            spans.push(Span::styled(
+                current,
+                Style::default().add_modifier(Modifier::BOLD),
+            ));
+        } else if in_code {
+            spans.push(Span::styled(current, Style::default().fg(Color::Magenta)));
+        } else {
+            spans.push(Span::raw(current));
+        }
+    }
+
+    Line::from(spans)
 }
 
 fn render_input(app: &App, area: Rect, buf: &mut Buffer) {
@@ -356,6 +532,59 @@ fn render_finalize_error_overlay(area: Rect, buf: &mut Buffer) {
             Span::styled("  ", Styles::default()),
             Span::styled("[Enter]", Styles::key_hint()),
             Span::styled(" Continue editing", Styles::default()),
+        ]),
+    ];
+
+    let paragraph = Paragraph::new(lines).style(Styles::default());
+    paragraph.render(inner, buf);
+}
+
+/// Quit confirmation overlay.
+pub struct QuitConfirmScreen;
+
+impl Screen for QuitConfirmScreen {
+    fn render(&self, app: &App, area: Rect, buf: &mut Buffer) {
+        // First render the spec studio behind
+        SpecStudioScreen.render(app, area, buf);
+
+        // Then render overlay
+        render_quit_confirm_overlay(area, buf);
+    }
+}
+
+fn render_quit_confirm_overlay(area: Rect, buf: &mut Buffer) {
+    use crate::ui::centered_fixed;
+    use ratatui::widgets::Clear;
+
+    let width = 50.min(area.width.saturating_sub(4));
+    let height = 8.min(area.height.saturating_sub(4));
+    let overlay_area = centered_fixed(width, height, area);
+
+    Clear.render(overlay_area, buf);
+
+    let block = Block::default()
+        .title(" Exit Ralf TUI? ")
+        .title_style(Styles::title())
+        .borders(Borders::ALL)
+        .border_style(Styles::border_active())
+        .style(Styles::default());
+
+    let inner = block.inner(overlay_area);
+    block.render(overlay_area, buf);
+
+    let lines = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  Your conversation will be saved ", Styles::default()),
+            Span::styled("(coming soon)", Styles::dim()),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("  ", Styles::default()),
+            Span::styled("[Enter]", Styles::key_hint()),
+            Span::styled(" Exit   ", Styles::default()),
+            Span::styled("[Esc]", Styles::key_hint()),
+            Span::styled(" Cancel", Styles::default()),
         ]),
     ];
 

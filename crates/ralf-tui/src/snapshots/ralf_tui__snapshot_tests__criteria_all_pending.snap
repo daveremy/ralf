@@ -1,0 +1,28 @@
+---
+source: crates/ralf-tui/src/lib.rs
+expression: result
+---
+┌ Run Status ──────────────────────────────────────────────────────────────────┐
+│ VERIFYING  Run: test-run-123  Elapsed: -                                     │
+│ Iter 1  Model: claude                                                        │
+└──────────────────────────────────────────────────────────────────────────────┘
+┌ Output ──────────────────────────────────────────────┐┌ Criteria ────────────┐
+│ Verifying completion criteria...                     ││☐ Test passes         │
+│                                                      ││☐ Code compiles       │
+│                                                      ││☐ No warnings         │
+│                                                      ││                      │
+│                                                      ││                      │
+│                                                      ││                      │
+│                                                      ││                      │
+│                                                      ││                      │
+│                                                      ││                      │
+└──────────────────────────────────────────────────────┘└──────────────────────┘
+┌ Events ──────────────────────────────────────┐┌ Git ─────────────────────────┐
+│ No events yet                                ││ Branch: main                 │
+│                                              ││ No changes                   │
+│                                              ││                              │
+│                                              ││                              │
+│                                              ││                              │
+│                                              ││                              │
+└──────────────────────────────────────────────┘└──────────────────────────────┘
+ Status   Esc/Ctrl+C  Cancel  f  Toggle Follow  ?  Help               Verifying

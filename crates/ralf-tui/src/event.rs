@@ -1,6 +1,6 @@
 //! Event handling for the ralf TUI.
 
-use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{self, Event as CrosstermEvent, KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -9,6 +9,8 @@ use tokio::sync::mpsc;
 pub enum Event {
     /// A key was pressed.
     Key(KeyEvent),
+    /// A mouse event occurred.
+    Mouse(MouseEvent),
     /// A tick event for UI updates.
     Tick,
     /// Terminal was resized.
@@ -36,6 +38,7 @@ impl EventHandler {
                     if let Ok(evt) = event::read() {
                         let event = match evt {
                             CrosstermEvent::Key(key) => Some(Event::Key(key)),
+                            CrosstermEvent::Mouse(mouse) => Some(Event::Mouse(mouse)),
                             CrosstermEvent::Resize(w, h) => Some(Event::Resize(w, h)),
                             _ => None,
                         };

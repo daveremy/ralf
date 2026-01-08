@@ -1,0 +1,28 @@
+---
+source: crates/ralf-tui/src/lib.rs
+expression: result
+---
+
+
+        ┌ Settings ────────────────────────────────────────────────────┐
+        │                                                              │
+        │  Model status:                                               │
+        │> [+] claude      [ ] not probed                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │                                                              │
+        │  ──────────────────────────────────────────────────────────  │
+        │  Model selection: (*) Round-robin  ( ) Priority              │
+        │  Promise tag: COMPLETE                                       │
+        │  (Use Left/Right to change selection strategy)               │
+        │                                                              │
+        │  [Enter] Save config  [d] Toggle selected  [r] Retry probe   │
+        │                                                              │
+        └──────────────────────────────────────────────────────────────┘
+
+
+ Settings   Enter  Save  d  Toggle  r  Retry  Esc  Back

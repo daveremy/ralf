@@ -267,7 +267,38 @@ fn run_probe_command(name: &str, timeout: Duration) -> Result<ProbeOutput, std::
         }
 
         if start.elapsed() > timeout {
+            // Kill the process
             let _ = child.kill();
+            let _ = child.wait(); // Reap the zombie
+
+            // Try to capture any output that was written before timeout
+            // This helps detect auth prompts that were printed before hanging
+            let mut stdout = String::new();
+            let mut stderr = String::new();
+
+            if let Some(mut out) = child.stdout.take() {
+                let _ = out.read_to_string(&mut stdout);
+            }
+            if let Some(mut err) = child.stderr.take() {
+                let _ = err.read_to_string(&mut stderr);
+            }
+
+            // Check if it looks like an auth issue
+            let combined = format!("{stdout}\n{stderr}").to_lowercase();
+            if combined.contains("auth")
+                || combined.contains("login")
+                || combined.contains("sign in")
+                || combined.contains("credential")
+                || combined.contains("authenticate")
+            {
+                // Return as a failed probe with auth info, not a timeout error
+                return Ok(ProbeOutput {
+                    success: false,
+                    stdout,
+                    stderr,
+                });
+            }
+
             return Err(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
                 "Probe timed out",

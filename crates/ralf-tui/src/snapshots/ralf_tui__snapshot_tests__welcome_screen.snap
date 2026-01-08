@@ -1,0 +1,28 @@
+---
+source: crates/ralf-tui/src/lib.rs
+expression: result
+---
+┌ Transcript ──────────────────────────────────┐┌ Draft ───────────────────────┐
+│                                              ││                              │
+│  Describe what you want to build:            ││  No draft yet.               │
+│                                              ││                              │
+│  Example: "Add a /health endpoint that return││  When the assistant produces │
+│  JSON with the server status and uptime."    ││  a spec, it will appear here.│
+│                                              ││                              │
+│  The assistant will help refine your spec,   ││  Review it, then Ctrl+F to   │
+│  then press Ctrl+F to finalize.              ││  save as PROMPT.md           │
+│                                              ││                              │
+│                                              ││                              │
+│                                              ││                              │
+│                                              ││                              │
+│                                              ││                              │
+│                                              ││                              │
+│                                              ││                              │
+│                                              ││                              │
+└──────────────────────────────────────────────┘└──────────────────────────────┘
+┌ Input ───────────────────────────────────────────────────────────────────────┐
+│> _                                                                           │
+│                                                                              │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+ Spec Studio   Enter  Send  Tab  Model  Ctrl+E  Export  Ctrl+F  Finalize claudeQ

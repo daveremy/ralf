@@ -9,6 +9,10 @@ use std::path::Path;
 /// Main configuration for ralf.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
+    /// Whether initial setup has been completed.
+    #[serde(default)]
+    pub setup_completed: bool,
+
     /// Priority order for model selection.
     #[serde(default = "default_model_priority")]
     pub model_priority: Vec<String>,
@@ -178,6 +182,7 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            setup_completed: false,
             model_priority: default_model_priority(),
             model_selection: default_model_selection(),
             required_verifiers: default_required_verifiers(),

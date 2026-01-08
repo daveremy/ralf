@@ -4,10 +4,14 @@
 //! - Welcome screen with model detection
 //! - Setup screen for configuration
 //! - Shared widgets (tabs, log viewers)
+//! - Headless mode for testing and automation
 
 mod app;
 mod event;
+pub mod headless;
 mod screens;
+#[cfg(test)]
+pub mod test_utils;
 mod ui;
 
 use screens::Screen as ScreenTrait;
@@ -18,6 +22,7 @@ pub use ralf_engine;
 
 use crossterm::{
     cursor::Show as ShowCursor,
+    event::{DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -31,7 +36,7 @@ struct TerminalGuard;
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(stdout(), LeaveAlternateScreen, ShowCursor);
+        let _ = execute!(stdout(), DisableMouseCapture, LeaveAlternateScreen, ShowCursor);
     }
 }
 
@@ -45,15 +50,15 @@ pub async fn run_tui(repo_path: &Path) -> Result<(), Box<dyn std::error::Error>>
     let _guard = TerminalGuard;
 
     let mut stdout = stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
     // Create app
     let mut app = App::new(repo_path.to_path_buf());
 
-    // Start probing if we're on Setup screen (first-time user)
-    if app.screen == Screen::Setup {
+    // Start probing if we're on Settings screen (first-time setup)
+    if app.screen == Screen::Settings {
         app.start_probing();
     }
 
@@ -91,11 +96,8 @@ async fn run_loop(
 
             // Render current screen
             match app.screen {
-                app::Screen::Welcome => {
-                    screens::welcome::WelcomeScreen.render(app, area, buf);
-                }
-                app::Screen::Setup => {
-                    screens::setup::SetupScreen.render(app, area, buf);
+                app::Screen::Settings => {
+                    screens::settings::SettingsScreen.render(app, area, buf);
                 }
                 app::Screen::SpecStudio => {
                     screens::spec_studio::SpecStudioScreen.render(app, area, buf);
@@ -106,8 +108,11 @@ async fn run_loop(
                 app::Screen::FinalizeError => {
                     screens::spec_studio::FinalizeErrorScreen.render(app, area, buf);
                 }
-                app::Screen::RunDashboard => {
-                    screens::run_dashboard::RunDashboardScreen.render(app, area, buf);
+                app::Screen::QuitConfirm => {
+                    screens::spec_studio::QuitConfirmScreen.render(app, area, buf);
+                }
+                app::Screen::Status => {
+                    screens::status::StatusScreen.render(app, area, buf);
                 }
             }
 
@@ -130,8 +135,8 @@ async fn run_loop(
             }
         }
 
-        // Start new probes if needed (only on Setup screen)
-        if app.screen == app::Screen::Setup {
+        // Start new probes if needed (only on Settings screen)
+        if app.screen == app::Screen::Settings {
             let models_to_probe = app.models_to_probe();
             for name in models_to_probe {
                 // Mark as in-flight to prevent duplicate spawning
@@ -160,6 +165,18 @@ async fn run_loop(
                     }
                     let action = event::key_to_action(key);
                     app.handle_action(action);
+                }
+                Event::Mouse(mouse) => {
+                    use crossterm::event::MouseEventKind;
+                    match mouse.kind {
+                        MouseEventKind::ScrollUp => {
+                            app.handle_action(Action::Up);
+                        }
+                        MouseEventKind::ScrollDown => {
+                            app.handle_action(Action::Down);
+                        }
+                        _ => {}
+                    }
                 }
                 Event::Tick => {
                     app.tick();
@@ -218,6 +235,12 @@ async fn handle_spec_studio_key(
     >,
 ) -> bool {
     use crossterm::event::{KeyCode, KeyModifiers};
+
+    // Handle Ctrl+Enter to insert newline
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Enter {
+        app.input_state.insert('\n');
+        return true;
+    }
 
     // Don't handle if control key is pressed (except for certain keys)
     if key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -317,5 +340,395 @@ mod tests {
         let version = tui_version();
         assert!(!version.is_empty());
         assert!(version.starts_with("0."));
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+    use crate::app::{CriterionStatus, RunStatus};
+    use crate::test_utils::*;
+    use insta::assert_snapshot;
+
+    // ========================================================================
+    // Screen Snapshot Tests
+    // ========================================================================
+
+    #[test]
+    fn test_snapshot_welcome_screen() {
+        let app = create_test_app();
+        let result = render_screen_to_string(&screens::spec_studio::SpecStudioScreen, &app);
+        assert_snapshot!("welcome_screen", result);
+    }
+
+    #[test]
+    fn test_snapshot_setup_screen() {
+        let mut app = create_test_app();
+        app.screen = app::Screen::Settings;
+        let result = render_screen_to_string(&screens::settings::SettingsScreen, &app);
+        assert_snapshot!("setup_screen", result);
+    }
+
+    #[test]
+    fn test_snapshot_spec_studio_screen() {
+        let mut app = create_test_app();
+        app.screen = app::Screen::SpecStudio;
+        let result = render_screen_to_string(&screens::spec_studio::SpecStudioScreen, &app);
+        assert_snapshot!("spec_studio_screen", result);
+    }
+
+    #[test]
+    fn test_snapshot_run_dashboard_idle() {
+        let app = create_test_app_with_run_status(RunStatus::Idle);
+        let result = render_screen_to_string(&screens::status::StatusScreen, &app);
+        assert_snapshot!("run_dashboard_idle", result);
+    }
+
+    #[test]
+    fn test_snapshot_run_dashboard_running() {
+        let app = create_test_app_with_run_status(RunStatus::Running);
+        let result = render_screen_to_string(&screens::status::StatusScreen, &app);
+        assert_snapshot!("run_dashboard_running", result);
+    }
+
+    #[test]
+    fn test_snapshot_run_dashboard_verifying() {
+        let app = create_test_app_with_run_status(RunStatus::Verifying);
+        let result = render_screen_to_string(&screens::status::StatusScreen, &app);
+        assert_snapshot!("run_dashboard_verifying", result);
+    }
+
+    #[test]
+    fn test_snapshot_run_dashboard_completed() {
+        let app = create_test_app_with_run_status(RunStatus::Completed);
+        let result = render_screen_to_string(&screens::status::StatusScreen, &app);
+        assert_snapshot!("run_dashboard_completed", result);
+    }
+
+    #[test]
+    fn test_snapshot_run_dashboard_failed() {
+        let app = create_test_app_with_run_status(RunStatus::Failed);
+        let result = render_screen_to_string(&screens::status::StatusScreen, &app);
+        assert_snapshot!("run_dashboard_failed", result);
+    }
+
+    #[test]
+    fn test_snapshot_run_dashboard_cancelled() {
+        let app = create_test_app_with_run_status(RunStatus::Cancelled);
+        let result = render_screen_to_string(&screens::status::StatusScreen, &app);
+        assert_snapshot!("run_dashboard_cancelled", result);
+    }
+
+    // ========================================================================
+    // Criteria Verification Display Tests
+    // ========================================================================
+
+    #[test]
+    fn test_snapshot_criteria_all_pending() {
+        let app = create_test_app_with_criteria(
+            vec!["Test passes", "Code compiles", "No warnings"],
+            vec![
+                CriterionStatus::Pending,
+                CriterionStatus::Pending,
+                CriterionStatus::Pending,
+            ],
+        );
+        let result = render_screen_to_string(&screens::status::StatusScreen, &app);
+        assert_snapshot!("criteria_all_pending", result);
+    }
+
+    #[test]
+    fn test_snapshot_criteria_mixed_status() {
+        let app = create_test_app_with_criteria(
+            vec![
+                "All tests pass",
+                "Code compiles without errors",
+                "No new clippy warnings",
+                "Documentation updated",
+            ],
+            vec![
+                CriterionStatus::Passed,
+                CriterionStatus::Passed,
+                CriterionStatus::Verifying,
+                CriterionStatus::Pending,
+            ],
+        );
+        let result = render_screen_to_string(&screens::status::StatusScreen, &app);
+        assert_snapshot!("criteria_mixed_status", result);
+    }
+
+    #[test]
+    fn test_snapshot_criteria_with_failures() {
+        let app = create_test_app_with_criteria(
+            vec!["Tests pass", "Code compiles", "Linting clean"],
+            vec![
+                CriterionStatus::Passed,
+                CriterionStatus::Failed,
+                CriterionStatus::Failed,
+            ],
+        );
+        let result = render_screen_to_string(&screens::status::StatusScreen, &app);
+        assert_snapshot!("criteria_with_failures", result);
+    }
+
+    #[test]
+    fn test_snapshot_criteria_all_passed() {
+        let app = create_test_app_with_criteria(
+            vec!["Tests pass", "Compiles", "No warnings"],
+            vec![
+                CriterionStatus::Passed,
+                CriterionStatus::Passed,
+                CriterionStatus::Passed,
+            ],
+        );
+        let result = render_screen_to_string(&screens::status::StatusScreen, &app);
+        assert_snapshot!("criteria_all_passed", result);
+    }
+}
+
+/// E2E and navigation tests that test event handling and screen transitions.
+#[cfg(test)]
+mod navigation_tests {
+    use crate::app::Screen;
+    use crate::event::Action;
+    use crate::test_utils::create_test_app;
+
+    // ========================================================================
+    // Navigation Flow Tests
+    // ========================================================================
+
+    #[test]
+    fn test_welcome_to_setup_navigation() {
+        let mut app = create_test_app();
+        assert_eq!(app.screen, Screen::SpecStudio);
+
+        // Press 's' to go to Setup
+        app.handle_action(Action::Setup);
+        assert_eq!(app.screen, Screen::Settings);
+    }
+
+    #[test]
+    fn test_welcome_to_spec_studio_navigation() {
+        let mut app = create_test_app();
+        assert_eq!(app.screen, Screen::SpecStudio);
+
+        // Press 'c' to go to Spec Studio (Chat)
+        app.handle_action(Action::Chat);
+        assert_eq!(app.screen, Screen::SpecStudio);
+    }
+
+    #[test]
+    fn test_welcome_to_run_dashboard_requires_prompt() {
+        let mut app = create_test_app();
+        assert_eq!(app.screen, Screen::SpecStudio);
+
+        // Press 'r' - but Run requires PROMPT.md to exist
+        // Without PROMPT.md, we stay on Welcome
+        app.handle_action(Action::Run);
+        // This tests the guard condition - would go to RunDashboard if PROMPT.md existed
+        assert_eq!(app.screen, Screen::SpecStudio);
+    }
+
+    #[test]
+    fn test_back_from_setup_to_welcome() {
+        let mut app = create_test_app();
+        app.screen = Screen::Settings;
+
+        // Press Escape to go back
+        app.handle_action(Action::Back);
+        assert_eq!(app.screen, Screen::SpecStudio);
+    }
+
+    #[test]
+    fn test_back_from_spec_studio_shows_quit_confirm() {
+        let mut app = create_test_app();
+        app.screen = Screen::SpecStudio;
+        assert!(!app.should_quit);
+
+        // Press Escape from home screen - should show quit confirmation
+        app.handle_action(Action::Back);
+        assert_eq!(app.screen, Screen::QuitConfirm);
+        assert!(!app.should_quit);
+
+        // Press Enter to confirm quit
+        app.handle_action(Action::Select);
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn test_quit_confirm_cancel_returns_to_spec_studio() {
+        let mut app = create_test_app();
+        app.screen = Screen::QuitConfirm;
+
+        // Press Escape to cancel
+        app.handle_action(Action::Back);
+        assert_eq!(app.screen, Screen::SpecStudio);
+        assert!(!app.should_quit);
+    }
+
+    #[test]
+    fn test_back_from_run_dashboard_to_welcome() {
+        let mut app = create_test_app();
+        app.screen = Screen::Status;
+
+        // When idle, Escape goes back to Welcome
+        app.handle_action(Action::Back);
+        assert_eq!(app.screen, Screen::SpecStudio);
+    }
+
+    #[test]
+    fn test_help_overlay_toggle() {
+        let mut app = create_test_app();
+        assert!(!app.show_help);
+
+        // Press '?' to show help
+        app.handle_action(Action::Help);
+        assert!(app.show_help);
+
+        // Press '?' or Escape to hide help
+        app.handle_action(Action::Back);
+        assert!(!app.show_help);
+    }
+
+    #[test]
+    fn test_quit_action_from_spec_studio_shows_confirm() {
+        let mut app = create_test_app();
+        app.screen = Screen::SpecStudio;
+        assert!(!app.should_quit);
+
+        // Press 'q' to quit - should show confirmation first
+        app.handle_action(Action::Quit);
+        assert_eq!(app.screen, Screen::QuitConfirm);
+        assert!(!app.should_quit);
+    }
+
+    // ========================================================================
+    // Run Dashboard State Tests
+    // ========================================================================
+
+    #[test]
+    fn test_run_dashboard_toggle_follow() {
+        let mut app = create_test_app();
+        app.screen = Screen::Status;
+
+        let initial_follow = app.run_state.follow_output;
+
+        // Press 'f' to toggle follow
+        app.handle_action(Action::ToggleFollow);
+        assert_ne!(app.run_state.follow_output, initial_follow);
+
+        // Toggle back
+        app.handle_action(Action::ToggleFollow);
+        assert_eq!(app.run_state.follow_output, initial_follow);
+    }
+
+    #[test]
+    fn test_setup_screen_model_selection() {
+        let mut app = create_test_app();
+        app.screen = Screen::Settings;
+
+        // Press Down to move selection
+        app.handle_action(Action::Down);
+
+        // If there are multiple models, selection should change
+        // (In test app we only have one model, so this tests bounds checking)
+        assert!(app.selected_model < app.models.len());
+    }
+
+    // ========================================================================
+    // Event Handling Edge Cases
+    // ========================================================================
+
+    #[test]
+    fn test_action_none_does_nothing() {
+        let mut app = create_test_app();
+        let initial_screen = app.screen;
+
+        app.handle_action(Action::None);
+        assert_eq!(app.screen, initial_screen);
+    }
+
+    #[test]
+    fn test_help_closes_before_quit() {
+        let mut app = create_test_app();
+        app.show_help = true;
+
+        // When help is open, Quit should close help first
+        app.handle_action(Action::Quit);
+        assert!(!app.show_help);
+        assert!(!app.should_quit); // Should not quit yet
+    }
+}
+
+/// PTY-based E2E tests using ratatui-testlib for Playwright-like testing.
+/// These tests spawn the actual ralf binary and interact with it through a PTY.
+///
+/// NOTE: These tests are currently experimental. Crossterm-based TUIs have
+/// challenges with PTY-based testing due to how raw mode and input handling
+/// work. The tests are preserved for future development when the PTY interaction
+/// issues are resolved.
+///
+/// For now, we rely on:
+/// - Snapshot tests (test rendering correctness)
+/// - Navigation tests (test event handling logic)
+/// - Manual E2E testing
+#[cfg(test)]
+mod pty_e2e_tests {
+    #[allow(unused_imports)]
+    use portable_pty::CommandBuilder;
+    #[allow(unused_imports)]
+    use ratatui_testlib::TuiTestHarness;
+    #[allow(unused_imports)]
+    use std::time::Duration;
+    use tempfile::TempDir;
+
+    /// Helper to get the path to the ralf binary.
+    #[allow(dead_code)]
+    fn ralf_binary_path() -> String {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let workspace_root = std::path::Path::new(manifest_dir)
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        workspace_root
+            .join("target/release/ralf")
+            .to_string_lossy()
+            .to_string()
+    }
+
+    /// Create a temporary project directory with a PROMPT.md and .ralf directory
+    #[allow(dead_code)]
+    fn create_test_project(prompt_content: &str) -> TempDir {
+        let dir = TempDir::new().expect("Failed to create temp dir");
+
+        // Create PROMPT.md
+        let prompt_path = dir.path().join("PROMPT.md");
+        std::fs::write(&prompt_path, prompt_content).expect("Failed to write PROMPT.md");
+
+        // Create .ralf directory (initialized state)
+        let ralf_dir = dir.path().join(".ralf");
+        std::fs::create_dir(&ralf_dir).expect("Failed to create .ralf dir");
+
+        // Create minimal config.json
+        let config = r#"{"primary_model":"claude","verifier_model":"gemini","max_iterations":10}"#;
+        std::fs::write(ralf_dir.join("config.json"), config).expect("Failed to write config");
+
+        dir
+    }
+
+    // PTY-based E2E tests are disabled due to crossterm PTY interaction issues.
+    // The TUI uses raw mode which doesn't play well with PTY-based testing.
+    // TODO: Investigate alternative approaches:
+    // 1. Use a mock terminal backend for E2E tests
+    // 2. Add a headless/test mode to the TUI
+    // 3. Wait for improvements in ratatui-testlib
+
+    #[test]
+    fn test_pty_infrastructure_available() {
+        // Verify the test infrastructure works
+        let project_dir = create_test_project("# Test\n\nTest.\n");
+        assert!(project_dir.path().join("PROMPT.md").exists());
+        assert!(project_dir.path().join(".ralf/config.json").exists());
     }
 }

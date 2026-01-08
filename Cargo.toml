@@ -34,6 +34,9 @@ clap = { version = "4.0", features = ["derive"] }
 
 # Testing
 tempfile = "3.10"
+insta = { version = "1.42", features = ["filters"] }
+ratatui-testlib = "0.1"
+portable-pty = "0.8"
 
 # Internal crates
 ralf-engine = { path = "crates/ralf-engine" }

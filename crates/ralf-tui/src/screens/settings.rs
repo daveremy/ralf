@@ -1,4 +1,4 @@
-//! Setup screen - model probing and configuration.
+//! Settings screen - model probing and configuration.
 
 use crate::app::App;
 use crate::screens::Screen;
@@ -12,15 +12,15 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget},
 };
 
-/// The setup screen.
-pub struct SetupScreen;
+/// The settings screen.
+pub struct SettingsScreen;
 
-impl Screen for SetupScreen {
+impl Screen for SettingsScreen {
     fn render(&self, app: &App, area: Rect, buf: &mut Buffer) {
         let (main_area, status_area) = main_layout(area);
 
         // Render main content
-        render_setup_content(app, main_area, buf);
+        render_settings_content(app, main_area, buf);
 
         // Render status bar
         let hints = vec![
@@ -29,7 +29,7 @@ impl Screen for SetupScreen {
             KeyHint::new("r", "Retry"),
             KeyHint::new("Esc", "Back"),
         ];
-        let mut status_bar = StatusBar::new("Setup").hints(hints);
+        let mut status_bar = StatusBar::new("Settings").hints(hints);
         if let Some(notification) = &app.notification {
             status_bar = status_bar.right(notification);
         }
@@ -37,11 +37,11 @@ impl Screen for SetupScreen {
     }
 }
 
-fn render_setup_content(app: &App, area: Rect, buf: &mut Buffer) {
+fn render_settings_content(app: &App, area: Rect, buf: &mut Buffer) {
     let content_area = centered_rect(80, 80, area);
 
     let block = Block::default()
-        .title(" Setup ")
+        .title(" Settings ")
         .title_style(Styles::title())
         .borders(Borders::ALL)
         .border_style(Styles::border_active())

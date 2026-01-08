@@ -1,8 +1,8 @@
-//! Run Dashboard screen - displays and controls autonomous loop execution.
+//! Status screen - displays and controls autonomous loop execution.
 //!
 //! Shows all panes simultaneously for real-time visibility into the run.
 
-use crate::app::{App, RunStatus};
+use crate::app::{App, CriterionStatus, RunStatus};
 use crate::screens::Screen;
 use crate::ui::main_layout;
 use crate::ui::theme::Styles;
@@ -15,10 +15,10 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget, Wrap},
 };
 
-/// The Run Dashboard screen.
-pub struct RunDashboardScreen;
+/// The Status screen (run dashboard).
+pub struct StatusScreen;
 
-impl Screen for RunDashboardScreen {
+impl Screen for StatusScreen {
     fn render(&self, app: &App, area: Rect, buf: &mut Buffer) {
         let (main_area, status_area) = main_layout(area);
 
@@ -60,7 +60,7 @@ impl Screen for RunDashboardScreen {
         render_git_pane(app, bottom_chunks[1], buf);
 
         // Render status bar
-        let hints = if app.run_state.status == RunStatus::Running {
+        let hints = if matches!(app.run_state.status, RunStatus::Running | RunStatus::Verifying) {
             vec![
                 KeyHint::new("Esc/Ctrl+C", "Cancel"),
                 KeyHint::new("f", "Toggle Follow"),
@@ -77,13 +77,14 @@ impl Screen for RunDashboardScreen {
 
         let status_text = match app.run_state.status {
             RunStatus::Running => "Running",
+            RunStatus::Verifying => "Verifying",
             RunStatus::Completed => "Completed",
             RunStatus::Cancelled => "Cancelled",
             RunStatus::Failed => "Failed",
             RunStatus::Idle => "Ready",
         };
 
-        let mut status_bar = StatusBar::new("Run Dashboard").hints(hints);
+        let mut status_bar = StatusBar::new("Status").hints(hints);
         if let Some(notification) = &app.notification {
             status_bar = status_bar.right(notification);
         } else {
@@ -97,6 +98,7 @@ fn render_header(app: &App, area: Rect, buf: &mut Buffer) {
     // Determine border style based on status
     let border_style = match app.run_state.status {
         RunStatus::Running => Style::default().fg(Color::Cyan),
+        RunStatus::Verifying => Style::default().fg(Color::Magenta),
         RunStatus::Completed => Style::default().fg(Color::Green),
         RunStatus::Failed | RunStatus::Cancelled => Style::default().fg(Color::Yellow),
         RunStatus::Idle => Styles::border(),
@@ -115,6 +117,7 @@ fn render_header(app: &App, area: Rect, buf: &mut Buffer) {
     // Build compact status line
     let status_style = match app.run_state.status {
         RunStatus::Running => Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        RunStatus::Verifying => Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
         RunStatus::Completed => Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
         RunStatus::Failed => Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         RunStatus::Cancelled => Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
@@ -123,6 +126,7 @@ fn render_header(app: &App, area: Rect, buf: &mut Buffer) {
 
     let status_text = match app.run_state.status {
         RunStatus::Running => "RUNNING",
+        RunStatus::Verifying => "VERIFYING",
         RunStatus::Completed => "COMPLETED",
         RunStatus::Cancelled => "CANCELLED",
         RunStatus::Failed => "FAILED",
@@ -190,10 +194,10 @@ fn render_header(app: &App, area: Rect, buf: &mut Buffer) {
 }
 
 fn render_output_pane(app: &App, area: Rect, buf: &mut Buffer) {
-    let border_style = if app.run_state.status == RunStatus::Running {
-        Style::default().fg(Color::Cyan)
-    } else {
-        Styles::border()
+    let border_style = match app.run_state.status {
+        RunStatus::Running => Style::default().fg(Color::Cyan),
+        RunStatus::Verifying => Style::default().fg(Color::Magenta),
+        _ => Styles::border(),
     };
 
     // Calculate scroll position for indicator
@@ -222,10 +226,10 @@ fn render_output_pane(app: &App, area: Rect, buf: &mut Buffer) {
     block.render(area, buf);
 
     if app.run_state.model_output.is_empty() {
-        let hint = if app.run_state.status == RunStatus::Running {
-            "Waiting for model output..."
-        } else {
-            "Press Enter to start the run"
+        let hint = match app.run_state.status {
+            RunStatus::Running => "Waiting for model output...",
+            RunStatus::Verifying => "Verifying completion criteria...",
+            _ => "Press Enter to start the run",
         };
         let paragraph = Paragraph::new(Line::from(Span::styled(
             format!(" {hint}"),
@@ -344,14 +348,27 @@ fn render_criteria_pane(app: &App, area: Rect, buf: &mut Buffer) {
         return;
     }
 
-    // Build wrapped text with checkboxes
-    // Unicode checkboxes: ☐ (empty), ☑ (checked), ☒ (failed)
+    // Build wrapped text with checkboxes based on verification status
+    // Unicode symbols: ☐ (pending), ⏳ (verifying), ☑ (passed), ☒ (failed)
     let mut lines: Vec<Line<'_>> = Vec::new();
-    for criterion in &app.run_state.criteria {
-        // Future: use ☑ or ☒ based on verification status
+    for (i, criterion) in app.run_state.criteria.iter().enumerate() {
+        let status = app
+            .run_state
+            .criteria_status
+            .get(i)
+            .copied()
+            .unwrap_or(CriterionStatus::Pending);
+
+        let (symbol, symbol_color, text_color) = match status {
+            CriterionStatus::Pending => ("☐", Color::Gray, Color::White),
+            CriterionStatus::Verifying => ("⏳", Color::Cyan, Color::Cyan),
+            CriterionStatus::Passed => ("☑", Color::Green, Color::Green),
+            CriterionStatus::Failed => ("☒", Color::Red, Color::Red),
+        };
+
         lines.push(Line::from(vec![
-            Span::styled("☐ ", Style::default().fg(Color::Gray)),
-            Span::styled(criterion.as_str(), Style::default().fg(Color::White)),
+            Span::styled(format!("{symbol} "), Style::default().fg(symbol_color)),
+            Span::styled(criterion.as_str(), Style::default().fg(text_color)),
         ]));
     }
 

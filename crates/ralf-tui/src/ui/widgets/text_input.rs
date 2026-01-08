@@ -82,12 +82,10 @@ impl Widget for TextInput<'_> {
         if self.content.is_empty() {
             let mut spans = vec![Span::styled(self.prompt, Styles::active())];
             if self.focused {
-                // Show cursor after prompt
+                // Show cursor only (no placeholder when focused)
                 spans.push(Span::styled("_", Styles::active()));
-                if let Some(placeholder) = self.placeholder {
-                    spans.push(Span::styled(placeholder, Styles::dim()));
-                }
             } else if let Some(placeholder) = self.placeholder {
+                // Show placeholder only when not focused
                 spans.push(Span::styled(placeholder, Styles::dim()));
             }
             let line = Line::from(spans);

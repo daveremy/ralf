@@ -3,9 +3,9 @@
 use crate::event::Action;
 use crate::ui::widgets::TextInputState;
 use ralf_engine::{
-    discover_models, draft_has_promise, get_git_info, parse_criteria, save_draft_snapshot,
-    ChatMessage, Config, GitInfo, ModelConfig, ModelInfo, ProbeResult, RunConfig, RunEvent,
-    RunHandle, Thread,
+    discover_models, draft_has_promise, extract_spec_from_response, get_git_info, parse_criteria,
+    save_draft_snapshot, ChatMessage, Config, GitInfo, ModelConfig, ModelInfo, ProbeResult,
+    RunConfig, RunEvent, RunHandle, Thread,
 };
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -18,13 +18,19 @@ const MAX_EVENTS: usize = 100;
 /// The current screen being displayed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Screen {
+    /// Settings screen for model configuration (first-time setup).
+    Settings,
+    /// Spec Studio for creating/editing prompts via AI chat.
     #[default]
-    Welcome,
-    Setup,
     SpecStudio,
+    /// Confirmation dialog for finalizing spec.
     FinalizeConfirm,
+    /// Error dialog when finalization fails.
     FinalizeError,
-    RunDashboard,
+    /// Confirmation dialog for quitting the app.
+    QuitConfirm,
+    /// Status/dashboard showing run progress and results.
+    Status,
 }
 
 /// Status of a run.
@@ -35,11 +41,27 @@ pub enum RunStatus {
     Idle,
     /// Run is currently active.
     Running,
+    /// Verifying completion criteria.
+    Verifying,
     /// Run completed successfully.
     Completed,
     /// Run was cancelled by user.
     Cancelled,
     /// Run failed with an error.
+    Failed,
+}
+
+/// Status of a single completion criterion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CriterionStatus {
+    /// Not yet verified.
+    #[default]
+    Pending,
+    /// Currently being verified.
+    Verifying,
+    /// Criterion passed verification.
+    Passed,
+    /// Criterion failed verification.
     Failed,
 }
 
@@ -78,6 +100,10 @@ pub struct RunState {
     pub error_message: Option<String>,
     /// Parsed completion criteria from PROMPT.md.
     pub criteria: Vec<String>,
+    /// Verification status for each criterion.
+    pub criteria_status: Vec<CriterionStatus>,
+    /// Model performing verification (if verifying).
+    pub verifier_model: Option<String>,
 }
 
 impl RunState {
@@ -180,6 +206,61 @@ pub struct App {
 }
 
 impl App {
+    /// Create a new app instance for testing (no model discovery or file I/O).
+    #[cfg(test)]
+    pub fn new_for_test() -> Self {
+        use ralf_engine::{GitInfo, ModelInfo, Thread};
+
+        let mock_model = ModelStatus {
+            info: ModelInfo {
+                name: "claude".to_string(),
+                found: true,
+                callable: true,
+                path: Some("/usr/bin/claude".to_string()),
+                version: Some("1.0.0".to_string()),
+                issues: vec![],
+            },
+            probe_result: None,
+            probing: false,
+            probe_in_flight: false,
+            enabled: true,
+        };
+
+        Self {
+            should_quit: false,
+            show_help: false,
+            screen: Screen::SpecStudio,
+            repo_path: PathBuf::from("/tmp/test-repo"),
+            git_info: GitInfo {
+                branch: "main".to_string(),
+                dirty: false,
+                changed_files: vec![],
+            },
+            config_exists: true,
+            config: Some(Config {
+                setup_completed: true,
+                ..Config::default()
+            }),
+            models: vec![mock_model],
+            selected_model: 0,
+            tick: 0,
+            round_robin: true,
+            promise_tag: "COMPLETE".to_string(),
+            notification: None,
+            notification_ttl: 0,
+            thread: Thread::new(),
+            input_state: TextInputState::new(),
+            chat_model_index: 0,
+            chat_in_progress: false,
+            transcript_scroll: 0,
+            draft_scroll: 0,
+            run_state: RunState::default(),
+            run_handle: None,
+            run_event_rx: None,
+            git_info_rx: None,
+        }
+    }
+
     /// Create a new app instance.
     pub fn new(repo_path: PathBuf) -> Self {
         let git_info = get_git_info();
@@ -202,11 +283,19 @@ impl App {
             })
             .collect();
 
-        // Start on Setup if no config exists, otherwise Welcome
-        let initial_screen = if config_exists {
-            Screen::Welcome
+        // Determine initial screen based on setup state:
+        // 1. If setup not completed → Settings
+        // 2. If no active thread/prompt → SpecStudio
+        // 3. If has active thread → Status
+        let setup_completed = config.as_ref().is_some_and(|c| c.setup_completed);
+        let has_prompt = repo_path.join("PROMPT.md").exists();
+
+        let initial_screen = if !setup_completed {
+            Screen::Settings
+        } else if !has_prompt {
+            Screen::SpecStudio
         } else {
-            Screen::Setup
+            Screen::Status
         };
 
         Self {
@@ -246,19 +335,17 @@ impl App {
             Action::Quit => {
                 if self.show_help {
                     self.show_help = false;
-                } else if self.screen == Screen::RunDashboard {
+                } else if self.screen == Screen::Status {
                     // On RunDashboard, Ctrl+C cancels if running, otherwise goes back
                     if self.run_state.status == RunStatus::Running {
                         self.request_cancel_run();
                     } else {
-                        self.screen = Screen::Welcome;
+                        self.screen = Screen::Status;
                     }
+                } else if self.screen == Screen::SpecStudio {
+                    // Show quit confirmation from SpecStudio
+                    self.screen = Screen::QuitConfirm;
                 } else {
-                    // Save thread if we're in SpecStudio before quitting
-                    if self.screen == Screen::SpecStudio {
-                        let spec_dir = self.repo_path.join(".ralf").join("spec");
-                        let _ = self.thread.save(&spec_dir);
-                    }
                     self.should_quit = true;
                 }
                 return;
@@ -278,43 +365,77 @@ impl App {
 
         // Screen-specific actions
         match self.screen {
-            Screen::Welcome => self.handle_welcome_action(action),
-            Screen::Setup => self.handle_setup_action(action),
+            Screen::Settings => self.handle_settings_action(action),
             Screen::SpecStudio => self.handle_spec_studio_action(action),
             Screen::FinalizeConfirm => self.handle_finalize_confirm_action(action),
             Screen::FinalizeError => self.handle_finalize_error_action(action),
-            Screen::RunDashboard => self.handle_run_dashboard_action(action),
+            Screen::QuitConfirm => self.handle_quit_confirm_action(action),
+            Screen::Status => self.handle_status_action(action),
         }
     }
 
-    fn handle_welcome_action(&mut self, action: Action) {
+    fn handle_status_action(&mut self, action: Action) {
         match action {
             Action::Setup => {
-                self.screen = Screen::Setup;
+                self.screen = Screen::Settings;
                 self.start_probing();
             }
             Action::Chat => {
-                // Only allow chat if config exists
-                if self.config_exists {
-                    self.screen = Screen::SpecStudio;
-                }
+                // Go to SpecStudio to edit the prompt
+                self.screen = Screen::SpecStudio;
             }
             Action::Run => {
-                // Only allow run if config exists and PROMPT.md exists
-                let prompt_path = self.repo_path.join("PROMPT.md");
-                if self.config_exists && prompt_path.exists() {
-                    // Criteria will be loaded when run starts via start_run()
-                    self.screen = Screen::RunDashboard;
+                // Start a run if not already running
+                if self.run_state.status == RunStatus::Idle
+                    || self.run_state.status == RunStatus::Completed
+                    || self.run_state.status == RunStatus::Failed
+                    || self.run_state.status == RunStatus::Cancelled
+                {
+                    self.start_run();
+                }
+            }
+            Action::Cancel => {
+                if self.run_state.status == RunStatus::Running {
+                    self.request_cancel_run();
+                }
+            }
+            Action::Up => {
+                if self.run_state.output_scroll > 0 {
+                    self.run_state.output_scroll -= 1;
+                    self.run_state.follow_output = false;
+                }
+            }
+            Action::Down => {
+                self.run_state.output_scroll += 1;
+            }
+            Action::ToggleFollow => {
+                self.run_state.follow_output = !self.run_state.follow_output;
+            }
+            Action::Back => {
+                // If running, cancel. Otherwise go back to SpecStudio
+                if self.run_state.status == RunStatus::Running {
+                    self.request_cancel_run();
+                } else {
+                    self.screen = Screen::SpecStudio;
                 }
             }
             _ => {}
         }
     }
 
-    fn handle_setup_action(&mut self, action: Action) {
+    fn handle_settings_action(&mut self, action: Action) {
         match action {
             Action::Back => {
-                self.screen = Screen::Welcome;
+                // Go to SpecStudio if setup was completed, else stay
+                let setup_done = self.config.as_ref().is_some_and(|c| c.setup_completed);
+                if setup_done {
+                    let has_prompt = self.repo_path.join("PROMPT.md").exists();
+                    self.screen = if has_prompt {
+                        Screen::Status
+                    } else {
+                        Screen::SpecStudio
+                    };
+                }
             }
             Action::Up => {
                 if self.selected_model > 0 {
@@ -327,18 +448,21 @@ impl App {
                 }
             }
             Action::Disable => {
+                // Toggle enabled state for selected model
                 if let Some(model) = self.models.get_mut(self.selected_model) {
                     model.enabled = !model.enabled;
                 }
             }
-            Action::Run => {
-                // In setup context, 'r' means retry probing
+            Action::Retry | Action::Run => {
+                // Retry probing all models ('r' key)
                 self.start_probing();
             }
             Action::Left | Action::Right => {
+                // Toggle round-robin mode
                 self.round_robin = !self.round_robin;
             }
             Action::Select => {
+                // Save configuration
                 self.save_config();
             }
             _ => {}
@@ -423,6 +547,7 @@ impl App {
         };
 
         let config = Config {
+            setup_completed: true, // Mark setup as complete
             model_priority: enabled_model_names.clone(),
             models: enabled_model_names
                 .iter()
@@ -440,8 +565,13 @@ impl App {
                 self.config_exists = true;
                 self.config = Some(config);
                 self.set_notification("Config saved successfully".to_string());
-                // Transition to Welcome screen after successful save
-                self.screen = Screen::Welcome;
+                // Transition: if no prompt go to SpecStudio, else Status
+                let has_prompt = self.repo_path.join("PROMPT.md").exists();
+                self.screen = if has_prompt {
+                    Screen::Status
+                } else {
+                    Screen::SpecStudio
+                };
             }
             Err(e) => {
                 self.set_notification(format!("Failed to save config: {e}"));
@@ -509,11 +639,13 @@ impl App {
 
     fn handle_spec_studio_action(&mut self, action: Action) {
         match action {
-            Action::Back => {
-                // Save thread before leaving
-                let spec_dir = self.repo_path.join(".ralf").join("spec");
-                let _ = self.thread.save(&spec_dir);
-                self.screen = Screen::Welcome;
+            Action::Back | Action::Quit => {
+                // SpecStudio is the home screen - show quit confirmation
+                self.screen = Screen::QuitConfirm;
+            }
+            Action::Setup => {
+                // Navigate to Settings
+                self.screen = Screen::Settings;
             }
             Action::Finalize => {
                 self.try_finalize();
@@ -561,6 +693,22 @@ impl App {
         }
     }
 
+    fn handle_quit_confirm_action(&mut self, action: Action) {
+        match action {
+            Action::Select => {
+                // Confirm quit - save thread and exit
+                let spec_dir = self.repo_path.join(".ralf").join("spec");
+                let _ = self.thread.save(&spec_dir);
+                self.should_quit = true;
+            }
+            Action::Back => {
+                // Cancel - return to SpecStudio
+                self.screen = Screen::SpecStudio;
+            }
+            _ => {}
+        }
+    }
+
     /// Attempt to finalize the specification.
     fn try_finalize(&mut self) {
         if draft_has_promise(&self.thread.draft) {
@@ -581,7 +729,7 @@ impl App {
                 let _ = self.thread.save(&spec_dir);
 
                 self.set_notification("PROMPT.md saved successfully".to_string());
-                self.screen = Screen::Welcome;
+                self.screen = Screen::Status;
             }
             Err(e) => {
                 self.set_notification(format!("Failed to save PROMPT.md: {e}"));
@@ -599,10 +747,10 @@ impl App {
 
     /// Add an assistant message to the current thread.
     pub fn add_assistant_message(&mut self, content: String, model: String) {
-        // Auto-update draft if response contains a promise tag or looks like a spec
-        // This allows the model to "propose" a draft that the user can then finalize
-        if draft_has_promise(&content) || content.starts_with('#') {
-            self.thread.draft = content.clone();
+        // Auto-update draft if response contains a spec
+        // Extract just the spec portion, not the conversational text
+        if let Some(spec) = extract_spec_from_response(&content) {
+            self.thread.draft = spec;
         }
 
         self.thread
@@ -684,49 +832,6 @@ impl App {
         }
     }
 
-    // === Run Dashboard handlers ===
-
-    fn handle_run_dashboard_action(&mut self, action: Action) {
-        match action {
-            Action::Back | Action::Cancel => {
-                if self.run_state.status == RunStatus::Running {
-                    // Cancel the run
-                    self.request_cancel_run();
-                } else {
-                    // Go back to welcome
-                    self.screen = Screen::Welcome;
-                }
-            }
-            Action::Select => {
-                if self.run_state.status != RunStatus::Running {
-                    // Start a new run (resets state)
-                    self.start_run();
-                }
-            }
-            // Note: Tab actions are no-ops in multi-pane view
-            Action::NextTab | Action::PrevTab | Action::Tab(_) => {}
-            Action::ToggleFollow => {
-                self.run_state.follow_output = !self.run_state.follow_output;
-            }
-            Action::Up => {
-                if self.run_state.output_scroll > 0 {
-                    self.run_state.output_scroll -= 1;
-                    // Disable follow when user scrolls up
-                    self.run_state.follow_output = false;
-                }
-            }
-            Action::Down => {
-                // Bound scroll to content length (leave at least 1 visible line)
-                let total_lines = self.run_state.model_output.lines().count();
-                let max_scroll = total_lines.saturating_sub(1);
-                if self.run_state.output_scroll < max_scroll {
-                    self.run_state.output_scroll += 1;
-                }
-            }
-            _ => {}
-        }
-    }
-
     /// Start a new run.
     pub fn start_run(&mut self) {
         // Check prerequisites
@@ -768,6 +873,7 @@ impl App {
             max_runtime_secs: 0, // No timeout for now
             prompt_path,
             repo_path: self.repo_path.clone(),
+            criteria: self.run_state.criteria.clone(),
         };
 
         // Update git info at run start
@@ -832,12 +938,16 @@ impl App {
                 self.run_state.push_event(format!("Run {run_id} started"));
             }
             RunEvent::IterationStarted { iteration, model } => {
+                self.run_state.status = RunStatus::Running;
                 self.run_state.current_iteration = iteration;
                 self.run_state.current_model = Some(model.clone());
                 self.run_state.model_output.clear();
                 self.run_state.output_scroll = 0;
                 // Clear previous iteration's results
                 self.run_state.verifier_results.clear();
+                self.run_state.verifier_model = None;
+                // Reset criteria status to Pending for new iteration
+                self.run_state.criteria_status = vec![CriterionStatus::Pending; self.run_state.criteria.len()];
                 // Clear stale cooldowns - the engine handles actual expiry
                 self.run_state.cooldowns.clear();
                 self.run_state
@@ -900,6 +1010,46 @@ impl App {
                     .push((model.clone(), duration_secs));
                 self.run_state
                     .push_event(format!("{model} in cooldown ({duration_secs}s)"));
+            }
+            RunEvent::VerificationStarted {
+                iteration,
+                model,
+                criteria_count,
+            } => {
+                self.run_state.status = RunStatus::Verifying;
+                self.run_state.verifier_model = Some(model.clone());
+                // Initialize all criteria as Pending, then set first to Verifying
+                self.run_state.criteria_status = vec![CriterionStatus::Pending; criteria_count];
+                if !self.run_state.criteria_status.is_empty() {
+                    self.run_state.criteria_status[0] = CriterionStatus::Verifying;
+                }
+                self.run_state.push_event(format!(
+                    "Verifying {criteria_count} criteria with {model} (iter {iteration})"
+                ));
+            }
+            RunEvent::CriterionVerified {
+                index,
+                passed,
+                reason,
+            } => {
+                // Update this criterion's status
+                if index < self.run_state.criteria_status.len() {
+                    self.run_state.criteria_status[index] = if passed {
+                        CriterionStatus::Passed
+                    } else {
+                        CriterionStatus::Failed
+                    };
+                    // Set next criterion to Verifying if there is one
+                    if index + 1 < self.run_state.criteria_status.len() {
+                        self.run_state.criteria_status[index + 1] = CriterionStatus::Verifying;
+                    }
+                }
+                let status = if passed { "PASS" } else { "FAIL" };
+                let reason_str = reason.map(|r| format!(" - {r}")).unwrap_or_default();
+                self.run_state.push_event(format!(
+                    "Criterion {}: {status}{reason_str}",
+                    index + 1
+                ));
             }
             RunEvent::IterationCompleted {
                 iteration,
@@ -978,10 +1128,10 @@ mod tests {
 
     #[test]
     fn test_screen_enum() {
-        assert_eq!(Screen::default(), Screen::Welcome);
-        assert_ne!(Screen::Welcome, Screen::Setup);
-        assert_ne!(Screen::Setup, Screen::SpecStudio);
-        assert_ne!(Screen::SpecStudio, Screen::RunDashboard);
+        assert_eq!(Screen::default(), Screen::SpecStudio);
+        assert_ne!(Screen::Status, Screen::Settings);
+        assert_ne!(Screen::Settings, Screen::SpecStudio);
+        assert_ne!(Screen::SpecStudio, Screen::Status);
     }
 
     #[test]
