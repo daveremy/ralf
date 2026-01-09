@@ -173,6 +173,34 @@ Each CLI tool may have different mechanisms for querying rate limit status proac
 
 ## Architecture
 
+### Core Principle: Conversation + Artifact
+
+The TUI is built around two complementary panes:
+
+1. **Conversation Pane (Left)**: The persistent interaction layer
+   - Timeline of all events (Spec, Run, Review, System)
+   - Input area at bottom for user interaction
+   - Always present, always the "conversation" with the system
+   - Feels like a chat interface
+
+2. **Artifact Pane (Right)**: The phase-specific output layer
+   - Shows what's being produced (spec, run output, diff, etc.)
+   - Adapts based on current phase
+   - Can have contextual actions when focused
+   - Display-focused, not input-focused
+
+**Key insight**: Input lives on the LEFT (part of the conversation), not the right. The right pane shows the "product" being built. This creates a chat-first feel where everything flows through the timeline.
+
+### Timeline as Source of Truth
+
+All actions result in timeline events:
+- User types a message → SpecEvent appears in timeline
+- User presses `r` to refresh models → SystemEvent appears
+- AI responds → SpecEvent with model attribution
+- Run completes iteration → RunEvent appears
+
+The timeline IS the conversation history, persisting across all phases.
+
 ### Component Hierarchy
 
 ```
@@ -182,11 +210,12 @@ App
 ├── HeartbeatRow (default: enabled, togglable via config)
 │   └── ━━ file.rs +12 ━━ other.rs ~3 ━━━━━━━━━━━━━━━━━━━━━━
 ├── MainArea
-│   ├── TimelinePane (left, persistent)
-│   │   └── TimelineEvent[]
-│   │       └── Typed (Spec|Run|Review|System), collapsible, filterable
-│   └── ContextPane (right, phase-adaptive)
-│       └── PhaseView (routed by ThreadPhase)
+│   ├── ConversationPane (left, persistent, interactive)
+│   │   ├── TimelineEvents[] (scrollable history)
+│   │   │   └── Typed (Spec|Run|Review|System), collapsible
+│   │   └── InputArea (phase-aware, always present)
+│   └── ArtifactPane (right, phase-adaptive, contextual actions)
+│       └── ArtifactView (routed by ThreadPhase)
 ├── FooterHints
 │   └── [key] Action │ [key] Action │ ... │ [?] Help │ [Ctrl+Q] Quit
 └── OverlayLayer
@@ -200,13 +229,21 @@ App
 │ StatusBar                                                           │
 ├─────────────────────────────────────────────────────────────────────┤
 │ HeartbeatRow (optional)                                             │
-├─────────────────────────────────┬───────────────────────────────────┤
-│                                 │                                   │
-│   TimelinePane                  │   ContextPane                     │
-│   (40% width default)           │   (60% width default)             │
-│                                 │                                   │
-├─────────────────────────────────┴───────────────────────────────────┤
-│ FooterHints                                                         │
+├─────────────────────────────┬───────────────────────────────────────┤
+│   CONVERSATION              │   ARTIFACT                            │
+│   ┌─────────────────────┐   │   ┌─────────────────────────────────┐ │
+│   │                     │   │   │                                 │ │
+│   │  Timeline Events    │   │   │  Phase-specific view:           │ │
+│   │  (scrollable)       │   │   │  - SpecPreview                  │ │
+│   │                     │   │   │  - RunOutput                    │ │
+│   │                     │   │   │  - DiffViewer                   │ │
+│   │                     │   │   │  - etc.                         │ │
+│   ├─────────────────────┤   │   │                                 │ │
+│   │ > Input area        │   │   │  [contextual actions when       │ │
+│   │   (phase-aware)     │   │   │   focused: r, a, j/k, etc.]     │ │
+│   └─────────────────────┘   │   └─────────────────────────────────┘ │
+├─────────────────────────────┴───────────────────────────────────────┤
+│ FooterHints (change based on phase AND focused pane)                │
 └─────────────────────────────────────────────────────────────────────┘
 
         ┌─────────────────────┐
@@ -215,35 +252,69 @@ App
         └─────────────────────┘
 ```
 
+### Focus Model
+
+- **Tab** cycles focus between Conversation (left) and Artifact (right)
+- **When Conversation is focused**: Typing goes to input area
+- **When Artifact is focused**: Keybinds go to artifact view actions
+- **Footer hints** update to show available actions for the focused pane
+
 ### Data Flow
 
 ```
+User Input ──→ Event Loop ──→ Action ──→ State Update ──→ Re-render
+                                │
+                                ├── Text input ──→ ChatState ──→ AI invocation
+                                ├── Keybind ──→ Artifact action ──→ State change
+                                └── Both ──→ TimelineEvent ──→ Persistent record
+
 ThreadStore ──→ Thread ──→ App State ──→ UI Components
                   │
-                  ├── phase ──→ StatusBar, ContextPane router
-                  ├── events ──→ TimelinePane
-                  ├── spec ──→ SpecEditor (context)
-                  └── run_state ──→ RunOutput (context)
-
-User Input ──→ Event Loop ──→ Action ──→ State Update ──→ Re-render
+                  ├── phase ──→ StatusBar, ArtifactPane router
+                  ├── events ──→ ConversationPane timeline
+                  ├── spec ──→ SpecPreview (artifact)
+                  └── run_state ──→ RunOutput (artifact)
 ```
 
 ---
 
-## Phase Views
+## Artifact Views & Actions
 
-The ContextPane renders different views based on `ThreadPhase`:
+The ArtifactPane renders different views based on `ThreadPhase`. Each view can define contextual actions available when focused.
 
-| Phase(s) | Context View | Description |
-|----------|--------------|-------------|
-| Drafting, Assessing, Finalized | SpecEditor | Chat input + spec preview |
-| Preflight, PreflightFailed | PreflightResults | Check list with pass/fail + actions |
-| Configuring | RunConfig | Model selection, iteration limit, verifiers |
-| Running, Verifying | RunOutput | Streaming output + criteria checklist |
-| Paused, Stuck | DecisionPrompt | Options with numbered keys |
-| Implemented | Summary | What was done + next actions |
-| PendingReview, Approved | DiffViewer | File-by-file diff with navigation |
-| ReadyToCommit, Done | CommitView | Commit message editor + summary |
+| Phase(s) | Artifact View | Description | Focused Actions |
+|----------|---------------|-------------|-----------------|
+| No Thread | ModelsPanel | Model status | `r` Refresh, `a` Auth |
+| Drafting, Assessing | SpecPreview | Live spec from chat | `y` Copy |
+| Finalized | SpecPreview | Ready to run | `e` Edit (revert) |
+| Preflight, PreflightFailed | PreflightResults | Check list | `r` Retry |
+| Configuring | RunConfig | Model, iterations | Form navigation |
+| Running, Verifying | RunOutput | Streaming + criteria | `c` Cancel |
+| Paused, Stuck | DecisionPrompt | Options | `1-4` Choose |
+| Implemented | Summary | What was done | `d` View diff |
+| Polishing | PolishChecklist | Docs/tests checklist | `j/k` Nav, `Enter` Toggle |
+| PendingReview, Approved | DiffViewer | File-by-file diff | `a` Approve, `j/k` Nav |
+| ReadyToCommit, Done | CommitView | Commit message | `c` Commit |
+
+**All actions result in timeline events** - the timeline is the unified record of everything that happened.
+
+## Input Purpose by Phase
+
+The input area (left pane) is always present but its purpose changes:
+
+| Phase(s) | Input Purpose |
+|----------|---------------|
+| No Thread | "Start typing to create a thread..." |
+| Drafting, Assessing | Chat with AI to develop spec |
+| Finalized | Type to edit (reverts to Drafting), or commands |
+| Preflight | Wait / type to cancel |
+| Configuring | Confirm settings |
+| Running, Verifying | Type to cancel or direct next iteration |
+| Paused, Stuck | Provide direction, choose action |
+| Implemented | Feedback, continue to review |
+| Polishing | Direct what to add (docs, tests), continue |
+| PendingReview | Comments, approve/reject |
+| ReadyToCommit, Done | Edit commit message, finalize |
 
 ---
 
@@ -307,50 +378,67 @@ Wire up the shell to thread state for dynamic content.
 
 **Exit Criteria:** Status bar and footer update based on thread phase, context pane routes to appropriate view.
 
-#### M5-B.3: Core Context Views
+#### M5-B.3: Conversation & Spec Flow
 
-Build the most frequently used context views. Broken into subphases for incremental delivery:
+Build the conversation layer (input in timeline) and spec artifact view. This delivers the full Drafting → Finalized flow with the new Conversation + Artifact architecture.
 
-##### M5-B.3a: SpecEditor
-**Spec:** `SPEC-m5b3a-spec-editor.md`
+##### M5-B.3a: Timeline Input
+**Spec:** `SPEC-m5b3a-timeline-input.md`
 
-The entry point for all workflows - where users draft and refine specs.
+Add the input area to the conversation pane (left), making the timeline interactive.
 
 **Deliverables:**
-- Chat input widget (multiline, Enter to send, Shift+Enter for newline)
-- Message history display with user/AI attribution
-- Spec preview panel (extracted from AI responses)
-- Integration with engine's `invoke_chat` for AI assessment
+- Input widget at bottom of timeline pane
+- Focus management (Tab between conversation/artifact)
+- Text input handling (Enter to send, Shift+Enter for newline)
+- Input history (Up/Down arrows)
+- Phase-aware placeholder text
+
+**Exit Criteria:** Can type in the input area, input is visually part of the timeline, focus switches between panes.
+
+##### M5-B.3b: Chat Integration
+**Spec:** `SPEC-m5b3b-chat-integration.md`
+
+Wire the input to the chat system, creating SpecEvents from user/AI messages.
+
+**Deliverables:**
+- ChatState management (thread, input, loading, error)
+- Async AI invocation via tokio + mpsc channels
+- User messages → SpecEvent in timeline
+- AI responses → SpecEvent with model attribution
+- Thread creation on first message
+- Thread.draft feedback loop (extracted spec fed to AI)
+- Thread persistence (save after AI responses)
+
+**Exit Criteria:** Can chat with AI, messages appear in timeline as SpecEvents, thread is created and persisted.
+
+##### M5-B.3c: Spec Artifact View
+**Spec:** `SPEC-m5b3c-spec-artifact.md`
+
+Build the SpecPreview artifact view (right pane) and phase transitions.
+
+**Deliverables:**
+- SpecPreview widget showing extracted spec
+- Markdown rendering (headers, code, lists, checkboxes)
+- Live updates as AI refines spec
 - Phase transitions: Drafting → Assessing → Finalized
-- Thread creation flow (new thread from TUI)
+- Finalized state shows "Ready to run"
+- Artifact actions when focused (`y` copy, `e` edit/revert)
 
-**Exit Criteria:** Can create a thread, draft a spec via chat, see AI assessment, and reach Finalized phase ready to run.
+**Exit Criteria:** Right pane shows spec preview, markdown renders correctly, phase transitions work, can reach Finalized state.
 
-##### M5-B.3b: RunOutput
-**Spec:** `SPEC-m5b3b-run-output.md`
+##### M5-B.3d: Run Artifact Views
+**Spec:** `SPEC-m5b3d-run-artifacts.md`
 
-Real-time visibility into autonomous runs.
-
-**Deliverables:**
-- Streaming model output display
-- Criteria checklist with live status updates
-- Iteration counter in status bar
-- Basic run controls (pause button)
-
-**Exit Criteria:** Can start a run and watch model output stream in real-time with criteria progress.
-
-##### M5-B.3c: Summary
-**Spec:** `SPEC-m5b3c-summary.md`
-
-Post-run summary of what was accomplished.
+Build the artifact views for the run phase.
 
 **Deliverables:**
-- Files changed summary (added/modified/deleted counts)
-- Criteria pass/fail summary
-- Next action guidance (review diff, polish, commit)
-- Quick actions (view diff, start polish phase)
+- RunOutput widget (streaming output + criteria checklist)
+- Run events appear in timeline
+- Summary widget (files changed, criteria results)
+- Artifact actions (`c` cancel during run)
 
-**Exit Criteria:** After a successful run, see clear summary of changes and next steps.
+**Exit Criteria:** Can start a run, see output in artifact pane, run events in timeline, summary after completion.
 
 #### M5-B.4: Advanced Context Views
 **Spec:** `SPEC-m5b4-advanced-views.md`
@@ -405,14 +493,15 @@ M5-A (Shell) ✓
   ├── M5-A.1 (Model Probing) ✓
   │
   ▼
-M5-B (Timeline & Context)
+M5-B (Conversation & Artifacts)
   ├── M5-B.1 (Timeline Foundation) ✓
   ├── M5-B.2 (Phase Router & Dynamic Status) ✓
-  ├── M5-B.3 (Core Context Views)
-  │   ├── M5-B.3a (SpecEditor) ← NEXT
-  │   ├── M5-B.3b (RunOutput)
-  │   └── M5-B.3c (Summary)
-  └── M5-B.4 (Advanced Context Views)
+  ├── M5-B.3 (Conversation & Spec Flow)
+  │   ├── M5-B.3a (Timeline Input) ← NEXT
+  │   ├── M5-B.3b (Chat Integration)
+  │   ├── M5-B.3c (Spec Artifact View)
+  │   └── M5-B.3d (Run Artifact Views)
+  └── M5-B.4 (Advanced Artifact Views)
   │
   ▼
 M5-C (Activity & Polish)
@@ -422,9 +511,11 @@ Each major phase builds on the previous. No parallel development between major p
 
 **Within M5-B**, subphases should be completed sequentially:
 - M5-B.1 → M5-B.2: Phase router needs timeline events to display ✓
-- M5-B.2 → M5-B.3: Context views need router infrastructure ✓
-- M5-B.3a → M5-B.3b → M5-B.3c: Each view builds on workflow progression
-- M5-B.3 and M5-B.4 could potentially overlap once core views are ready
+- M5-B.2 → M5-B.3: Conversation layer needs router infrastructure ✓
+- M5-B.3a → M5-B.3b: Chat integration needs input widget
+- M5-B.3b → M5-B.3c: Spec artifact needs chat to produce content
+- M5-B.3c → M5-B.3d: Run artifacts follow same pattern
+- M5-B.3 and M5-B.4 could potentially overlap once conversation layer is ready
 
 **Within M5-C**, activity features and polish features can be developed independently.
 
