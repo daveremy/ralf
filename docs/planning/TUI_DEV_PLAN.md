@@ -382,19 +382,45 @@ Wire up the shell to thread state for dynamic content.
 
 Build the conversation layer (input in timeline) and spec artifact view. This delivers the full Drafting → Finalized flow with the new Conversation + Artifact architecture.
 
-##### M5-B.3a: Timeline Input
+##### M5-B.3a: Timeline Input ✓
 **Spec:** `SPEC-m5b3a-timeline-input.md`
+**Status:** Complete (2026-01-09)
 
 Add the input area to the conversation pane (left), making the timeline interactive.
 
 **Deliverables:**
-- Input widget at bottom of timeline pane
-- Focus management (Tab between conversation/artifact)
-- Text input handling (Enter to send, Shift+Enter for newline)
-- Input history (Up/Down arrows)
-- Phase-aware placeholder text
+- ✓ Input widget at bottom of timeline pane (ConversationPane)
+- ✓ Focus management (Tab between conversation/artifact)
+- ✓ Text input handling (Enter to send, Shift+Enter for newline)
+- ✓ Phase-aware placeholder text
+- Input history deferred to M5-B.3a'
 
-**Exit Criteria:** Can type in the input area, input is visually part of the timeline, focus switches between panes.
+**Exit Criteria:** ✓ Can type in the input area, input is visually part of the timeline, focus switches between panes.
+
+##### M5-B.3a': Slash Command Infrastructure
+**Spec:** `SPEC-slash-commands.md`
+
+Implement the input-first command system with slash commands and layered keybindings. This is foundational infrastructure that changes how users interact with ralf.
+
+**Background:**
+The initial M5-B.3a implementation revealed a UX conflict: reserved keys (q=quit, 1/2/3=modes) blocked free typing. After analysis (inspired by Claude Code), we adopted an input-first model where all typing goes to input and actions use slash commands.
+
+**Deliverables:**
+- Command parser and registry
+- Global commands: `/help`, `/quit`, `/split`, `/focus`, `/canvas`, `/refresh`, `/clear`
+- Keybinding layer: `Ctrl+1/2/3`, `Escape`, `F1`, `Ctrl+R`, `Ctrl+L`
+- `/help` with context-aware output (phase-specific commands shown)
+- Autocomplete popup when `/` typed
+- Focus trap escape (typing `/` from any pane jumps to input)
+- Footer hints update to show slash commands
+- Remove old reserved key logic from M5-B.3a
+
+**Phase-specific commands (stubs for later phases):**
+- `/approve`, `/reject` (PendingReview)
+- `/pause`, `/resume`, `/cancel` (Running)
+- `/model [name]` (global)
+
+**Exit Criteria:** Can use `/help` to see commands, slash commands execute actions, keybindings work as alternates, typing is never blocked.
 
 ##### M5-B.3b: Chat Integration
 **Spec:** `SPEC-m5b3b-chat-integration.md`
@@ -497,7 +523,8 @@ M5-B (Conversation & Artifacts)
   ├── M5-B.1 (Timeline Foundation) ✓
   ├── M5-B.2 (Phase Router & Dynamic Status) ✓
   ├── M5-B.3 (Conversation & Spec Flow)
-  │   ├── M5-B.3a (Timeline Input) ← NEXT
+  │   ├── M5-B.3a (Timeline Input) ✓
+  │   ├── M5-B.3a' (Slash Commands) ← NEXT
   │   ├── M5-B.3b (Chat Integration)
   │   ├── M5-B.3c (Spec Artifact View)
   │   └── M5-B.3d (Run Artifact Views)
@@ -512,7 +539,8 @@ Each major phase builds on the previous. No parallel development between major p
 **Within M5-B**, subphases should be completed sequentially:
 - M5-B.1 → M5-B.2: Phase router needs timeline events to display ✓
 - M5-B.2 → M5-B.3: Conversation layer needs router infrastructure ✓
-- M5-B.3a → M5-B.3b: Chat integration needs input widget
+- M5-B.3a → M5-B.3a': Slash commands refine input handling ✓
+- M5-B.3a' → M5-B.3b: Chat integration needs slash command infrastructure
 - M5-B.3b → M5-B.3c: Spec artifact needs chat to produce content
 - M5-B.3c → M5-B.3d: Run artifacts follow same pattern
 - M5-B.3 and M5-B.4 could potentially overlap once conversation layer is ready
@@ -663,3 +691,4 @@ crates/ralf-tui/src/
 | 2026-01-08 | Broke M5-B into subphases: B.1 Timeline Foundation, B.2 Phase Router, B.3 Core Views, B.4 Advanced Views |
 | 2026-01-08 | Added Input Handling section: keyboard-first with mouse support, vi-style navigation |
 | 2026-01-09 | Broke M5-B.3 into subphases: B.3a SpecEditor, B.3b RunOutput, B.3c Summary. Marked B.1, B.2 complete. |
+| 2026-01-09 | Completed M5-B.3a (Timeline Input). Added M5-B.3a' (Slash Commands) after UX analysis revealed input-first model needed. Updated TUI_UX_PRINCIPLES.md with slash command system design. |
