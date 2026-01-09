@@ -24,6 +24,7 @@ pub mod shell;
 #[cfg(test)]
 pub mod test_utils;
 pub mod theme;
+pub mod timeline;
 mod ui;
 pub mod widgets;
 
@@ -38,6 +39,10 @@ pub use layout::{FocusedPane, ScreenMode};
 pub use models::{ModelState, ModelStatus, ModelsSummary};
 pub use shell::{run_shell, ShellApp, UiConfig};
 pub use theme::{BorderSet, IconMode, IconSet, Theme};
+pub use timeline::{
+    EventKind, ReviewEvent, ReviewResult, RunEvent, SpecEvent, SystemEvent, SystemLevel,
+    TimelineEvent, TimelineState, TimelineWidget,
+};
 
 use crossterm::{
     cursor::Show as ShowCursor,
@@ -545,6 +550,8 @@ mod snapshot_tests {
         let theme = theme::Theme::default();
         let borders = theme::BorderSet::new(theme::IconMode::Unicode);
         let models: Vec<models::ModelStatus> = vec![];
+        let timeline_state = timeline::TimelineState::new();
+        let mut timeline_bounds = shell::TimelinePaneBounds::default();
 
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).expect("Failed to create terminal");
@@ -558,8 +565,11 @@ mod snapshot_tests {
                     &theme,
                     &borders,
                     &models,
-                    false,       // ascii_mode
-                    false,       // show_models_panel
+                    false, // ascii_mode
+                    false, // show_models_panel
+                    &timeline_state,
+                    &mut timeline_bounds,
+                    None, // toast
                 );
             })
             .expect("Failed to draw");

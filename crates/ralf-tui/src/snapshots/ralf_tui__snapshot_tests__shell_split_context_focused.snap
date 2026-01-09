@@ -3,8 +3,8 @@ source: crates/ralf-tui/src/lib.rs
 expression: result
 ---
 ● Drafting │ "New Thread"
-╭ Timeline ────────────────────╮┏ Context ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-│Timeline events will appear he│┃Context view will appear here...              ┃
+┌ Timeline ────────────────────┐┏ Context ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│                              │┃Context view will appear here...              ┃
 │                              │┃                                              ┃
 │                              │┃                                              ┃
 │                              │┃                                              ┃
@@ -14,6 +14,7 @@ expression: result
 │                              │┃                                              ┃
 │                              │┃                                              ┃
 │                              │┃                                              ┃
+│  No events yet               │┃                                              ┃
 │                              │┃                                              ┃
 │                              │┃                                              ┃
 │                              │┃                                              ┃
@@ -23,6 +24,5 @@ expression: result
 │                              │┃                                              ┃
 │                              │┃                                              ┃
 │                              │┃                                              ┃
-│                              │┃                                              ┃
-╰──────────────────────────────╯┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+└──────────────────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 [Tab] Focus │ [1/2/3] Modes │ [?] Help │ [q] Quit

@@ -289,8 +289,10 @@ Build the timeline event system that forms the backbone of the TUI.
 - Event rendering with timestamps, badges, and model attribution
 - Selection highlighting
 - Basic collapsible events (▸/▾ with Enter)
+- Mouse support (scroll, click-to-select, double-click-to-toggle)
+- Copy to clipboard (`y` or `Ctrl+C` to copy selected event content)
 
-**Exit Criteria:** Timeline pane shows events, can scroll and select, events display with proper formatting.
+**Exit Criteria:** Timeline pane shows events, can scroll and select, events display with proper formatting. Can copy event content to clipboard.
 
 #### M5-B.2: Phase Router & Dynamic Status
 **Spec:** `SPEC-m5b2-phase-router.md`
@@ -410,6 +412,10 @@ Each major phase builds on the previous. No parallel development between major p
   - Double-click for toggle actions (collapse/expand)
   - Graceful degradation when mouse unavailable
 - **Vi-style navigation** - j/k for up/down, g/G for jump to start/end
+- **Clipboard integration** - Copy event content for sharing/debugging
+  - `y` (vim yank) or `Ctrl+C` to copy selected event
+  - Cross-platform clipboard via `arboard` crate
+  - Essential for extracting error messages, model output, etc.
 
 ### Testing Strategy
 - **Headless mode** for automated testing (render to buffer, assert content)

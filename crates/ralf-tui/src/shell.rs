@@ -12,17 +12,59 @@
 use std::io;
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent};
-#[cfg(test)]
-use crossterm::event::KeyModifiers;
+use arboard::Clipboard;
+use crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
+    MouseButton, MouseEvent, MouseEventKind,
+};
 use ratatui::{backend::Backend, Terminal};
 
 use crate::layout::{render_shell, FocusedPane, ScreenMode, MIN_HEIGHT, MIN_WIDTH};
 use crate::models::ModelStatus;
 use crate::theme::{BorderSet, IconMode, IconSet, Theme};
+use crate::timeline::{
+    EventKind, ReviewEvent, ReviewResult, RunEvent, SpecEvent, SystemEvent, TimelineState,
+    SCROLL_SPEED,
+};
 use ralf_engine::discovery::{discover_models, probe_model, KNOWN_MODELS};
+
+/// Maximum time between clicks to count as double-click.
+const DOUBLE_CLICK_THRESHOLD: Duration = Duration::from_millis(500);
+
+/// Tracks last click for double-click detection.
+#[derive(Debug, Clone, Copy)]
+struct LastClick {
+    time: Instant,
+    row: u16,
+    column: u16,
+}
+
+/// Toast notification duration.
+const TOAST_DURATION: Duration = Duration::from_secs(2);
+
+/// A temporary toast notification.
+#[derive(Debug, Clone)]
+pub struct Toast {
+    /// The message to display.
+    pub message: String,
+    /// When the toast expires.
+    pub expires_at: Instant,
+}
+
+/// Bounds of the timeline pane's inner area (for mouse coordinate translation).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct TimelinePaneBounds {
+    /// Inner area top-left x coordinate.
+    pub inner_x: u16,
+    /// Inner area top-left y coordinate.
+    pub inner_y: u16,
+    /// Inner area width.
+    pub inner_width: u16,
+    /// Inner area height.
+    pub inner_height: u16,
+}
 
 /// UI configuration (from environment or config file).
 #[derive(Debug, Clone)]
@@ -74,6 +116,14 @@ pub struct ShellApp {
     pub probe_complete: bool,
     /// Whether to show the models panel in the context pane.
     pub show_models_panel: bool,
+    /// Timeline state for the left pane.
+    pub timeline: TimelineState,
+    /// Bounds of the timeline pane's inner area.
+    pub timeline_bounds: TimelinePaneBounds,
+    /// Last mouse click for double-click detection.
+    last_click: Option<LastClick>,
+    /// Current toast notification (if any).
+    pub toast: Option<Toast>,
 }
 
 impl Default for ShellApp {
@@ -95,6 +145,10 @@ impl ShellApp {
             .map(|name| ModelStatus::probing(name))
             .collect();
 
+        // Create timeline with sample events for testing
+        let mut timeline = TimelineState::new();
+        Self::add_sample_events(&mut timeline);
+
         Self {
             screen_mode: ScreenMode::default(),
             focused_pane: FocusedPane::default(),
@@ -107,7 +161,90 @@ impl ShellApp {
             models,
             probe_complete: false,
             show_models_panel: true, // Show by default until a thread is loaded
+            timeline,
+            timeline_bounds: TimelinePaneBounds::default(),
+            last_click: None,
+            toast: None,
         }
+    }
+
+    /// Show a toast notification.
+    pub fn show_toast(&mut self, message: impl Into<String>) {
+        self.toast = Some(Toast {
+            message: message.into(),
+            expires_at: Instant::now() + TOAST_DURATION,
+        });
+    }
+
+    /// Clear expired toast.
+    pub fn clear_expired_toast(&mut self) {
+        if let Some(ref toast) = self.toast {
+            if Instant::now() >= toast.expires_at {
+                self.toast = None;
+            }
+        }
+    }
+
+    /// Add sample events to timeline for testing.
+    fn add_sample_events(timeline: &mut TimelineState) {
+        // System event: session start
+        timeline.push(EventKind::System(SystemEvent::info("Session started")));
+
+        // Spec event: user input
+        timeline.push(EventKind::Spec(SpecEvent::user(
+            "Add authentication to the API\nSupport JWT tokens\nInclude refresh token logic",
+        )));
+
+        // Run event: model working (multi-line, will be collapsed by default)
+        timeline.push(EventKind::Run(RunEvent::new(
+            "claude",
+            1,
+            "Analyzing codebase structure...\nFound 47 relevant files\nPlanning implementation",
+        )));
+
+        // Run event: file change
+        timeline.push(EventKind::Run(RunEvent::file_change(
+            "claude",
+            1,
+            "src/auth.rs +127",
+            "pub fn authenticate(token: &str) -> Result<User, AuthError> {\n    // JWT validation\n    let claims = decode_jwt(token)?;\n    Ok(User::from_claims(claims))\n}",
+        )));
+
+        // Review event: passed
+        timeline.push(EventKind::Review(ReviewEvent::new(
+            "cargo check passes",
+            ReviewResult::Passed,
+        )));
+
+        // Review event: failed with details
+        timeline.push(EventKind::Review(ReviewEvent::with_details(
+            "cargo test passes",
+            ReviewResult::Failed,
+            "2 tests failed:\n- test_auth_expired_token\n- test_refresh_invalid",
+        )));
+
+        // Run event: fixing tests
+        timeline.push(EventKind::Run(RunEvent::new(
+            "gemini",
+            2,
+            "Fixing test failures...\nUpdating token validation logic",
+        )));
+
+        // System event: warning
+        timeline.push(EventKind::System(SystemEvent::warning(
+            "Model rate limit approaching (80% of quota used)",
+        )));
+
+        // Review event: passed after fix
+        timeline.push(EventKind::Review(ReviewEvent::new(
+            "cargo test passes",
+            ReviewResult::Passed,
+        )));
+
+        // System event: completion
+        timeline.push(EventKind::System(SystemEvent::info(
+            "All criteria verified - ready for review",
+        )));
     }
 
     /// Check if terminal is too small.
@@ -120,8 +257,75 @@ impl ShellApp {
         matches!(self.ui_config.icons, IconMode::Ascii)
     }
 
+    /// Check if the timeline pane is currently focused.
+    pub fn timeline_focused(&self) -> bool {
+        match self.screen_mode {
+            ScreenMode::Split => self.focused_pane == FocusedPane::Timeline,
+            ScreenMode::TimelineFocus => true,
+            ScreenMode::ContextFocus => false,
+        }
+    }
+
     /// Handle keyboard input.
     pub fn handle_key_event(&mut self, key: KeyEvent) -> Option<ShellAction> {
+        // Timeline-specific keys when timeline is focused
+        if self.timeline_focused() {
+            let visible_count = self
+                .timeline
+                .events_per_page(self.timeline_bounds.inner_height as usize);
+            match key.code {
+                // Navigation
+                KeyCode::Char('j') | KeyCode::Down => {
+                    self.timeline.select_next();
+                    self.timeline.ensure_selection_visible(visible_count);
+                    return None;
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.timeline.select_prev();
+                    self.timeline.ensure_selection_visible(visible_count);
+                    return None;
+                }
+                KeyCode::Char('g') | KeyCode::Home => {
+                    self.timeline.jump_to_start();
+                    return None;
+                }
+                KeyCode::Char('G') | KeyCode::End => {
+                    self.timeline.jump_to_end();
+                    return None;
+                }
+                KeyCode::PageUp => {
+                    self.timeline.page_up(visible_count);
+                    self.timeline.ensure_selection_visible(visible_count);
+                    return None;
+                }
+                KeyCode::PageDown => {
+                    self.timeline.page_down(visible_count);
+                    self.timeline.ensure_selection_visible(visible_count);
+                    return None;
+                }
+                // Toggle collapse
+                KeyCode::Enter => {
+                    self.timeline.toggle_collapse();
+                    return None;
+                }
+                // Copy selected event to clipboard (vim-style yank)
+                KeyCode::Char('y') => {
+                    if let Some(content) = self.selected_event_content() {
+                        return Some(ShellAction::CopyToClipboard(content));
+                    }
+                    return None;
+                }
+                // Copy with Ctrl+C
+                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if let Some(content) = self.selected_event_content() {
+                        return Some(ShellAction::CopyToClipboard(content));
+                    }
+                    return None;
+                }
+                _ => {} // Fall through to global handlers
+            }
+        }
+
         match key.code {
             // Screen modes - support both Ctrl+N and plain N, plus F-keys
             KeyCode::Char('1') | KeyCode::F(1) => {
@@ -164,6 +368,70 @@ impl ShellApp {
         }
     }
 
+    /// Handle mouse input.
+    pub fn handle_mouse_event(&mut self, mouse: MouseEvent) {
+        // Only handle mouse events when timeline is focused
+        if !self.timeline_focused() {
+            return;
+        }
+
+        let bounds = &self.timeline_bounds;
+
+        // Check if click is within timeline pane bounds
+        let in_timeline = mouse.column >= bounds.inner_x
+            && mouse.column < bounds.inner_x + bounds.inner_width
+            && mouse.row >= bounds.inner_y
+            && mouse.row < bounds.inner_y + bounds.inner_height;
+
+        match mouse.kind {
+            MouseEventKind::ScrollUp => {
+                if in_timeline {
+                    self.timeline.scroll_up(SCROLL_SPEED);
+                }
+            }
+            MouseEventKind::ScrollDown => {
+                if in_timeline {
+                    self.timeline.scroll_down(SCROLL_SPEED);
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                if !in_timeline {
+                    return;
+                }
+
+                let now = Instant::now();
+
+                // Check for double-click
+                let is_double_click = self.last_click.is_some_and(|last| {
+                    now.duration_since(last.time) < DOUBLE_CLICK_THRESHOLD
+                        && mouse.row == last.row
+                        && mouse.column == last.column
+                });
+
+                // Convert to relative y coordinate within timeline inner area
+                let relative_y = (mouse.row - bounds.inner_y) as usize;
+
+                if let Some(idx) = self.timeline.y_to_event_index(relative_y) {
+                    self.timeline.select(idx);
+
+                    if is_double_click {
+                        self.timeline.toggle_collapse();
+                        self.last_click = None; // Reset after double-click
+                    }
+                }
+
+                if !is_double_click {
+                    self.last_click = Some(LastClick {
+                        time: now,
+                        row: mouse.row,
+                        column: mouse.column,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Handle terminal resize.
     pub fn handle_resize(&mut self, width: u16, height: u16) {
         self.terminal_size = (width, height);
@@ -181,13 +449,34 @@ impl ShellApp {
     pub fn start_probing(&self) -> mpsc::Receiver<ModelStatus> {
         probe_models_parallel(Duration::from_secs(10))
     }
+
+    /// Get the content of the selected event for copying.
+    ///
+    /// Returns None if no event is selected.
+    pub fn selected_event_content(&self) -> Option<String> {
+        self.timeline
+            .selected()
+            .and_then(|idx| self.timeline.events().get(idx))
+            .map(crate::TimelineEvent::copyable_content)
+    }
 }
 
 /// Actions that the shell can request from the main loop.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShellAction {
     /// Refresh all model probes.
     RefreshModels,
+    /// Copy text to clipboard (with result message for feedback).
+    CopyToClipboard(String),
+}
+
+/// Result of a clipboard operation.
+#[derive(Debug, Clone)]
+pub enum ClipboardResult {
+    /// Successfully copied to clipboard.
+    Success,
+    /// Clipboard operation failed.
+    Failed(String),
 }
 
 /// Probe all known models in parallel, returning results via a channel.
@@ -230,74 +519,107 @@ pub fn run_shell<B: Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
         app.terminal_size = (size.width, size.height);
     }
 
+    // Enable mouse capture
+    crossterm::execute!(std::io::stdout(), EnableMouseCapture)?;
+
     // Start probing models in parallel
     let mut probe_rx = Some(app.start_probing());
     let mut pending_probes = KNOWN_MODELS.len();
 
-    loop {
-        // Check for completed probes (non-blocking)
-        if let Some(ref rx) = probe_rx {
-            while let Ok(status) = rx.try_recv() {
-                // Update the model in our list
-                if let Some(model) = app.models.iter_mut().find(|m| m.name == status.name) {
-                    *model = status;
+    let result = (|| {
+        loop {
+            // Check for completed probes (non-blocking)
+            if let Some(ref rx) = probe_rx {
+                while let Ok(status) = rx.try_recv() {
+                    // Update the model in our list
+                    if let Some(model) = app.models.iter_mut().find(|m| m.name == status.name) {
+                        *model = status;
+                    }
+                    pending_probes = pending_probes.saturating_sub(1);
                 }
-                pending_probes = pending_probes.saturating_sub(1);
+
+                // If all probes complete, drop the receiver
+                if pending_probes == 0 {
+                    app.probe_complete = true;
+                    probe_rx = None;
+                }
             }
 
-            // If all probes complete, drop the receiver
-            if pending_probes == 0 {
-                app.probe_complete = true;
-                probe_rx = None;
-            }
-        }
+            // Clear expired toasts
+            app.clear_expired_toast();
 
-        // Render
-        terminal.draw(|frame| {
-            render_shell(
-                frame,
-                app.screen_mode,
-                app.focused_pane,
-                &app.theme,
-                &app.borders,
-                &app.models,
-                app.is_ascii_mode(),
-                app.show_models_panel,
-            );
-        })?;
+            // Render
+            terminal.draw(|frame| {
+                render_shell(
+                    frame,
+                    app.screen_mode,
+                    app.focused_pane,
+                    &app.theme,
+                    &app.borders,
+                    &app.models,
+                    app.is_ascii_mode(),
+                    app.show_models_panel,
+                    &app.timeline,
+                    &mut app.timeline_bounds,
+                    app.toast.as_ref(),
+                );
+            })?;
 
-        // Handle events (16ms poll = ~60fps)
-        if event::poll(Duration::from_millis(16))? {
-            match event::read()? {
-                Event::Key(key) => {
-                    if let Some(action) = app.handle_key_event(key) {
-                        match action {
-                            ShellAction::RefreshModels => {
-                                // Reset models to probing state and start new probes
-                                app.models = KNOWN_MODELS
-                                    .iter()
-                                    .map(|name| ModelStatus::probing(name))
-                                    .collect();
-                                app.probe_complete = false;
-                                probe_rx = Some(app.start_probing());
-                                pending_probes = KNOWN_MODELS.len();
+            // Handle events (16ms poll = ~60fps)
+            if event::poll(Duration::from_millis(16))? {
+                match event::read()? {
+                    Event::Key(key) => {
+                        if let Some(action) = app.handle_key_event(key) {
+                            match action {
+                                ShellAction::RefreshModels => {
+                                    // Reset models to probing state and start new probes
+                                    app.models = KNOWN_MODELS
+                                        .iter()
+                                        .map(|name| ModelStatus::probing(name))
+                                        .collect();
+                                    app.probe_complete = false;
+                                    probe_rx = Some(app.start_probing());
+                                    pending_probes = KNOWN_MODELS.len();
+                                }
+                                ShellAction::CopyToClipboard(content) => {
+                                    // Try to copy to clipboard
+                                    match Clipboard::new() {
+                                        Ok(mut clipboard) => {
+                                            if let Err(e) = clipboard.set_text(&content) {
+                                                app.show_toast(format!("Copy failed: {e}"));
+                                            } else {
+                                                app.show_toast("Copied to clipboard");
+                                            }
+                                        }
+                                        Err(e) => {
+                                            app.show_toast(format!("Clipboard unavailable: {e}"));
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
+                    Event::Mouse(mouse) => {
+                        app.handle_mouse_event(mouse);
+                    }
+                    Event::Resize(width, height) => {
+                        app.handle_resize(width, height);
+                    }
+                    _ => {}
                 }
-                Event::Resize(width, height) => {
-                    app.handle_resize(width, height);
-                }
-                _ => {}
+            }
+
+            if app.should_quit {
+                break;
             }
         }
+        Ok(())
+    })();
 
-        if app.should_quit {
-            break;
-        }
-    }
+    // Disable mouse capture (cleanup)
+    let _ = crossterm::execute!(std::io::stdout(), DisableMouseCapture);
 
-    Ok(())
+    result
 }
 
 #[cfg(test)]
@@ -321,6 +643,7 @@ mod tests {
         assert_eq!(app.screen_mode, ScreenMode::Split);
         assert_eq!(app.focused_pane, FocusedPane::Timeline);
 
+        // Tab toggles between left (Timeline) and right (Context/Models) panes
         app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(app.focused_pane, FocusedPane::Context);
 

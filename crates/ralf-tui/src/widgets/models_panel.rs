@@ -29,6 +29,7 @@ pub struct ModelsPanel<'a> {
     models: &'a [ModelStatus],
     theme: &'a Theme,
     ascii_mode: bool,
+    focused: bool,
 }
 
 impl<'a> ModelsPanel<'a> {
@@ -38,6 +39,7 @@ impl<'a> ModelsPanel<'a> {
             models,
             theme,
             ascii_mode: false,
+            focused: false,
         }
     }
 
@@ -45,6 +47,13 @@ impl<'a> ModelsPanel<'a> {
     #[must_use]
     pub fn ascii_mode(mut self, ascii: bool) -> Self {
         self.ascii_mode = ascii;
+        self
+    }
+
+    /// Set whether this panel is focused.
+    #[must_use]
+    pub fn focused(mut self, focused: bool) -> Self {
+        self.focused = focused;
         self
     }
 
@@ -61,12 +70,17 @@ impl<'a> ModelsPanel<'a> {
 
 impl Widget for ModelsPanel<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // Create border with title
+        // Create border with title (highlight border when focused)
+        let border_color = if self.focused {
+            self.theme.primary
+        } else {
+            self.theme.border
+        };
         let block = Block::default()
             .title(" Models ")
             .title_style(Style::default().fg(self.theme.text))
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(self.theme.border))
+            .border_style(Style::default().fg(border_color))
             .style(Style::default().bg(self.theme.base));
 
         let inner = block.inner(area);

@@ -170,6 +170,28 @@ Mouse support enabled when terminal supports it (crossterm handles detection).
 - Click selection works even when timeline pane is not focused
 - Mouse support degrades gracefully (keyboard always works)
 
+### 3b. Copy to Clipboard
+
+Users need to copy event content (e.g., error messages, model output) for sharing or debugging.
+
+| Key | Action |
+|-----|--------|
+| `y` | Copy selected event content to system clipboard (vim-style yank) |
+| `Ctrl+C` | Copy selected event content to system clipboard |
+
+**Copy behavior:**
+- Copies the full content of the selected event (not just the visible/truncated portion)
+- For Run events: copies the full `content` field
+- For Spec events: copies the full `content` field
+- For Review events: copies criterion + result + details (if any)
+- For System events: copies the full `message` field
+- Shows brief toast/status message: "Copied to clipboard" (or error if clipboard unavailable)
+- Graceful fallback if system clipboard unavailable (show error, don't crash)
+
+**Implementation notes:**
+- Use `arboard` crate for cross-platform clipboard access
+- Clipboard errors should be caught and displayed, not panic
+
 ### 4. Collapsible Events
 
 Events with multi-line content can be collapsed:
@@ -314,6 +336,8 @@ crates/ralf-tui/src/
 - [ ] Mouse click selects event
 - [ ] Mouse double-click toggles collapse
 - [ ] Empty timeline shows helpful message ("No events yet")
+- [ ] `y` or `Ctrl+C` copies selected event content to clipboard
+- [ ] Copy shows feedback message (success or error)
 
 ## Testing
 

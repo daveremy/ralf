@@ -17,17 +17,21 @@ pub enum ScreenMode {
 }
 
 /// Which pane has keyboard focus.
+///
+/// The UI has two main panes: Timeline (left) and Context (right).
+/// The Context pane shows either the Models panel or Context content
+/// depending on state, but focus is simply left vs right.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FocusedPane {
-    /// Timeline pane has focus.
+    /// Timeline pane (left) has focus.
     #[default]
     Timeline,
-    /// Context pane has focus.
+    /// Context pane (right) has focus - shows Models or Context content.
     Context,
 }
 
 impl FocusedPane {
-    /// Toggle focus to the other pane.
+    /// Toggle focus between the two panes.
     #[must_use]
     pub fn toggle(self) -> Self {
         match self {
