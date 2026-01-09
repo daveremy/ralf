@@ -12,17 +12,17 @@ expression: result
 │                              ││                                              │
 │                              ││                                              │
 │                              ││                                              │
-│  No events yet               ││                                              │
-│                              ││                                              │
-│                              ││                                              │
-│                              ││                                              │
-│                              ││                                              │
-│                              ││                                              │
-│                              ││                                              │
-│                              ││                                              │
-│──────────────────────────────││                                              │
-│> _                           ││                                              │
+│ ┌───────────────────────────────────────────┐                                │
+│ │/help  Show available commands             │                                │
+│ │/quit  Exit ralf                           │                                │
+│ │/split  Split view mode                    │                                │
+│ │/focus  Focus conversation mode            │                                │
+│ │/canvas  Focus canvas mode                 │                                │
+│ │/refresh  Refresh model status             │                                │
+│ │/clear  Clear conversation                 │                                │
+│─│/search  Search timeline                   │                                │
+│>└───────────────────────────────────────────┘                                │
 │                              ││                                              │
 │                              ││                                              │
 └──────────────────────────────┘╰──────────────────────────────────────────────╯
-[Alt+j/k] Navigate │ [Enter] Send/Toggle │ [Ctrl+C] Copy │ [/] Commands │ [Esc]
+[Enter] Send │ [Tab] Switch │ [/] Commands │ [Esc] Quit

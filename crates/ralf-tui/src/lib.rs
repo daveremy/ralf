@@ -15,6 +15,7 @@
 //! - [`shell`] - Main app and run function
 
 mod app;
+pub mod commands;
 pub mod context;
 pub mod conversation;
 mod event;

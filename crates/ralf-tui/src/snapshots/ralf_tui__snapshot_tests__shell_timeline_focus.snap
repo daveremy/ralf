@@ -25,4 +25,4 @@ expression: result
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
-[j/k] Navigate │ [Enter] Toggle │ [y] Copy │ [Tab] Focus │ [1/2/3] Modes │ [?] H
+[Alt+j/k] Navigate │ [Enter] Send/Toggle │ [Ctrl+C] Copy │ [/] Commands │ [Esc]

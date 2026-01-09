@@ -1,6 +1,6 @@
 //! Footer hints widget for keybinding display.
 //!
-//! Format: `[Tab] Focus │ [1/2/3] Modes │ [?] Help │ [q] Quit`
+//! Uses input-first model format: `[/] Commands │ [Esc] Clear/Quit │ [Tab] Focus`
 //!
 //! The [`hints_for_state`] function generates phase-aware hints that change
 //! based on the current thread phase and focused pane.
@@ -48,13 +48,15 @@ impl<'a> FooterHints<'a> {
         Self { hints, theme }
     }
 
-    /// Get the default hints for the shell (always includes help and quit).
+    /// Get the default hints for the shell (input-first model).
+    ///
+    /// All typing goes to input; commands via `/cmd` or modifier keys.
     pub fn default_hints() -> Vec<KeyHint> {
         vec![
+            KeyHint::new("/", "Commands"),
+            KeyHint::new("Esc", "Clear/Quit"),
             KeyHint::new("Tab", "Focus"),
-            KeyHint::new("1/2/3", "Modes"),
-            KeyHint::new("?", "Help"),
-            KeyHint::new("q", "Quit"),
+            KeyHint::new("F1", "Help"),
         ]
     }
 }
@@ -112,6 +114,8 @@ pub fn hints_for_state(
 }
 
 /// Internal helper for generating hints based on effective focus.
+///
+/// Uses input-first model: character keys go to input, commands via `/` or modifiers.
 fn hints_for_focus(
     phase: Option<PhaseKind>,
     focused: FocusedPane,
@@ -119,94 +123,84 @@ fn hints_for_focus(
 ) -> Vec<KeyHint> {
     let mut hints = Vec::new();
 
-    // Pane-specific hints first
+    // Pane-specific hints first (using modifier keys for input-first model)
     match focused {
         FocusedPane::Timeline => {
-            hints.push(KeyHint::new("j/k", "Navigate"));
-            hints.push(KeyHint::new("Enter", "Toggle"));
-            hints.push(KeyHint::new("y", "Copy"));
+            hints.push(KeyHint::new("Alt+j/k", "Navigate"));
+            hints.push(KeyHint::new("Enter", "Send/Toggle"));
+            hints.push(KeyHint::new("Ctrl+C", "Copy"));
         }
         FocusedPane::Context => {
-            // Context hints depend on phase
+            // Context hints depend on phase (use slash commands)
             hints.extend(context_hints_for_phase(phase));
         }
     }
 
-    // Common hints
+    // Common hints (input-first model)
+    hints.push(KeyHint::new("/", "Commands"));
+    hints.push(KeyHint::new("Esc", "Clear/Quit"));
     hints.push(KeyHint::new("Tab", "Focus"));
-    hints.push(KeyHint::new("1/2/3", "Modes"));
     if show_models_panel && phase.is_none() {
         // Only show refresh when no thread and models panel visible
-        hints.push(KeyHint::new("r", "Refresh"));
+        hints.push(KeyHint::new("Ctrl+R", "Refresh"));
     }
-    hints.push(KeyHint::new("?", "Help"));
-    hints.push(KeyHint::new("q", "Quit"));
+    hints.push(KeyHint::new("F1", "Help"));
 
     hints
 }
 
 /// Get context-pane hints for a phase.
+///
+/// Uses slash commands for phase-specific actions in the input-first model.
 fn context_hints_for_phase(phase: Option<PhaseKind>) -> Vec<KeyHint> {
     match phase {
         // Terminal states and no thread share the same hints
-        None | Some(PhaseKind::Done | PhaseKind::Abandoned) => vec![
-            KeyHint::new("n", "New Thread"),
-            KeyHint::new("o", "Open Thread"),
-        ],
+        None | Some(PhaseKind::Done | PhaseKind::Abandoned) => {
+            vec![KeyHint::new("Enter", "Send message")]
+        }
         Some(PhaseKind::Drafting | PhaseKind::Assessing) => vec![
             KeyHint::new("Enter", "Send"),
-            KeyHint::new("Ctrl+F", "Finalize"),
+            KeyHint::new("/finalize", "Finalize"),
         ],
-        Some(PhaseKind::Finalized) => vec![
-            KeyHint::new("r", "Run"),
-            KeyHint::new("e", "Edit Spec"),
-        ],
+        Some(PhaseKind::Finalized) => {
+            vec![KeyHint::new("Enter", "Run")]
+        }
         Some(PhaseKind::Preflight) => vec![], // Auto-progresses
-        Some(PhaseKind::PreflightFailed) => vec![
-            KeyHint::new("r", "Retry"),
-            KeyHint::new("e", "Edit Spec"),
-        ],
-        Some(PhaseKind::Configuring) => vec![
-            KeyHint::new("Enter", "Start"),
-            KeyHint::new("m", "Models"),
-        ],
+        Some(PhaseKind::PreflightFailed) => {
+            vec![KeyHint::new("Enter", "Retry")]
+        }
+        Some(PhaseKind::Configuring) => {
+            vec![KeyHint::new("Enter", "Start")]
+        }
         // Note: Running can pause, Verifying cannot (different transitions)
-        Some(PhaseKind::Running) => vec![KeyHint::new("p", "Pause")],
+        Some(PhaseKind::Running) => vec![KeyHint::new("/pause", "Pause")],
         Some(PhaseKind::Verifying) => {
             // Verifying can't transition to Paused; wait for completion
             vec![]
         }
         Some(PhaseKind::Paused) => vec![
-            KeyHint::new("r", "Resume"),
-            KeyHint::new("c", "Reconfigure"),
-            KeyHint::new("a", "Abandon"),
+            KeyHint::new("/resume", "Resume"),
+            KeyHint::new("/cancel", "Cancel"),
         ],
-        Some(PhaseKind::Stuck) => vec![
-            KeyHint::new("r", "Revise Spec"),
-            KeyHint::new("c", "Reconfigure"),
-            KeyHint::new("m", "Manual Assist"),
-            KeyHint::new("d", "Diagnose"),
-            KeyHint::new("a", "Abandon"),
-        ],
-        Some(PhaseKind::Implemented) => vec![
-            KeyHint::new("Enter", "Review"),
-            KeyHint::new("p", "Polish"),
-        ],
-        Some(PhaseKind::Polishing) => vec![
-            KeyHint::new("Enter", "Finish"), // Returns to Implemented state
-        ],
+        Some(PhaseKind::Stuck) => {
+            vec![KeyHint::new("Enter", "Provide input")]
+        }
+        Some(PhaseKind::Implemented) => {
+            vec![KeyHint::new("Enter", "Review")]
+        }
+        Some(PhaseKind::Polishing) => {
+            vec![KeyHint::new("Enter", "Finish")]
+        }
         Some(PhaseKind::PendingReview) => vec![
-            KeyHint::new("a", "Approve"),
-            KeyHint::new("j/k", "Navigate Diff"),
-            KeyHint::new("r", "Request Changes"),
+            KeyHint::new("/approve", "Approve"),
+            KeyHint::new("/reject", "Reject"),
         ],
-        Some(PhaseKind::Approved) => vec![
-            KeyHint::new("Enter", "Ready"), // Transitions to ReadyToCommit
-        ],
-        Some(PhaseKind::ReadyToCommit) => vec![
-            KeyHint::new("c", "Commit"),
-            KeyHint::new("e", "Edit Message"),
-        ],
+        Some(PhaseKind::Approved) => {
+            vec![KeyHint::new("Enter", "Ready")]
+        }
+        Some(PhaseKind::ReadyToCommit) => {
+            vec![KeyHint::new("Enter", "Commit")]
+        }
     }
 }
 
@@ -226,24 +220,33 @@ mod tests {
         let hints = FooterHints::default_hints();
         assert_eq!(hints.len(), 4);
 
-        // Should include help and quit
-        assert!(hints.iter().any(|h| h.key == "?" && h.action == "Help"));
-        assert!(hints.iter().any(|h| h.key == "q" && h.action == "Quit"));
+        // Input-first model hints
+        assert!(hints.iter().any(|h| h.key == "/" && h.action == "Commands"));
+        assert!(hints
+            .iter()
+            .any(|h| h.key == "Esc" && h.action == "Clear/Quit"));
+        assert!(hints.iter().any(|h| h.key == "F1" && h.action == "Help"));
     }
 
     #[test]
     fn test_hints_for_state_no_thread_context_focus() {
         let hints = hints_for_state(None, ScreenMode::ContextFocus, FocusedPane::Context, true);
 
-        // Should have new/open thread hints
-        assert!(hints.iter().any(|h| h.key == "n" && h.action == "New Thread"));
-        assert!(hints.iter().any(|h| h.key == "o" && h.action == "Open Thread"));
+        // Should have send message hint
+        assert!(hints
+            .iter()
+            .any(|h| h.key == "Enter" && h.action == "Send message"));
         // Should have refresh when models panel showing and no thread
-        assert!(hints.iter().any(|h| h.key == "r" && h.action == "Refresh"));
-        // Common hints
+        assert!(hints
+            .iter()
+            .any(|h| h.key == "Ctrl+R" && h.action == "Refresh"));
+        // Common hints (input-first model)
+        assert!(hints.iter().any(|h| h.key == "/" && h.action == "Commands"));
+        assert!(hints
+            .iter()
+            .any(|h| h.key == "Esc" && h.action == "Clear/Quit"));
         assert!(hints.iter().any(|h| h.key == "Tab" && h.action == "Focus"));
-        assert!(hints.iter().any(|h| h.key == "?" && h.action == "Help"));
-        assert!(hints.iter().any(|h| h.key == "q" && h.action == "Quit"));
+        assert!(hints.iter().any(|h| h.key == "F1" && h.action == "Help"));
     }
 
     #[test]
@@ -255,10 +258,14 @@ mod tests {
             false,
         );
 
-        // Timeline hints should appear
-        assert!(hints.iter().any(|h| h.key == "j/k" && h.action == "Navigate"));
-        assert!(hints.iter().any(|h| h.key == "Enter" && h.action == "Toggle"));
-        assert!(hints.iter().any(|h| h.key == "y" && h.action == "Copy"));
+        // Timeline hints should appear (with modifier keys)
+        assert!(hints
+            .iter()
+            .any(|h| h.key == "Alt+j/k" && h.action == "Navigate"));
+        assert!(hints
+            .iter()
+            .any(|h| h.key == "Enter" && h.action == "Send/Toggle"));
+        assert!(hints.iter().any(|h| h.key == "Ctrl+C" && h.action == "Copy"));
     }
 
     #[test]
@@ -270,7 +277,9 @@ mod tests {
             FocusedPane::Timeline,
             false,
         );
-        assert!(hints.iter().any(|h| h.key == "j/k" && h.action == "Navigate"));
+        assert!(hints
+            .iter()
+            .any(|h| h.key == "Alt+j/k" && h.action == "Navigate"));
 
         // Context focused in split mode
         let hints = hints_for_state(
@@ -291,8 +300,10 @@ mod tests {
             false,
         );
 
-        // Running phase should show pause
-        assert!(hints.iter().any(|h| h.key == "p" && h.action == "Pause"));
+        // Running phase should show /pause command
+        assert!(hints
+            .iter()
+            .any(|h| h.key == "/pause" && h.action == "Pause"));
     }
 
     #[test]
@@ -304,9 +315,13 @@ mod tests {
             false,
         );
 
-        assert!(hints.iter().any(|h| h.key == "r" && h.action == "Resume"));
-        assert!(hints.iter().any(|h| h.key == "c" && h.action == "Reconfigure"));
-        assert!(hints.iter().any(|h| h.key == "a" && h.action == "Abandon"));
+        // Paused phase should show slash commands
+        assert!(hints
+            .iter()
+            .any(|h| h.key == "/resume" && h.action == "Resume"));
+        assert!(hints
+            .iter()
+            .any(|h| h.key == "/cancel" && h.action == "Cancel"));
     }
 
     #[test]
@@ -318,9 +333,10 @@ mod tests {
             false,
         );
 
-        assert!(hints.iter().any(|h| h.key == "r" && h.action == "Revise Spec"));
-        assert!(hints.iter().any(|h| h.key == "m" && h.action == "Manual Assist"));
-        assert!(hints.iter().any(|h| h.key == "d" && h.action == "Diagnose"));
+        // Stuck phase should show enter to provide input
+        assert!(hints
+            .iter()
+            .any(|h| h.key == "Enter" && h.action == "Provide input"));
     }
 
     #[test]
@@ -332,9 +348,13 @@ mod tests {
             false,
         );
 
-        assert!(hints.iter().any(|h| h.key == "a" && h.action == "Approve"));
-        assert!(hints.iter().any(|h| h.key == "j/k" && h.action == "Navigate Diff"));
-        assert!(hints.iter().any(|h| h.key == "r" && h.action == "Request Changes"));
+        // Pending review should show slash commands
+        assert!(hints
+            .iter()
+            .any(|h| h.key == "/approve" && h.action == "Approve"));
+        assert!(hints
+            .iter()
+            .any(|h| h.key == "/reject" && h.action == "Reject"));
     }
 
     #[test]
@@ -347,7 +367,9 @@ mod tests {
         );
 
         // Should NOT have refresh when thread is active
-        assert!(!hints.iter().any(|h| h.key == "r" && h.action == "Refresh"));
+        assert!(!hints
+            .iter()
+            .any(|h| h.key == "Ctrl+R" && h.action == "Refresh"));
     }
 
     #[test]
@@ -360,6 +382,8 @@ mod tests {
         );
 
         // Verifying cannot pause (unlike Running)
-        assert!(!hints.iter().any(|h| h.key == "p" && h.action == "Pause"));
+        assert!(!hints
+            .iter()
+            .any(|h| h.key == "/pause" && h.action == "Pause"));
     }
 }
