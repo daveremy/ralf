@@ -12,6 +12,89 @@ This document outlines the development plan for ralf's terminal user interface. 
 
 ---
 
+## CLI-First Model Architecture
+
+**ralf depends on CLI AI coding tools being installed on the system.** This is a deliberate design choice:
+
+- **No API key management** - ralf leverages existing CLI tools (claude, codex, gemini) that handle their own authentication
+- **User's existing setup** - if you can run `claude` in your terminal, ralf can use it
+- **Reduced complexity** - no need to configure API keys, endpoints, or credentials in ralf
+- **Security** - API keys stay in their respective CLI tool configs, not duplicated
+
+### Supported CLI Tools
+
+| Tool | Command | Auth Method |
+|------|---------|-------------|
+| Claude Code | `claude` | Anthropic CLI auth |
+| OpenAI Codex | `codex` | OpenAI CLI auth |
+| Gemini CLI | `gemini` | Google Cloud auth |
+
+### Model Discovery & Status
+
+The TUI must clearly communicate model availability:
+
+1. **Startup probe** - On launch, probe each CLI to verify:
+   - Command exists on PATH
+   - Auth is configured (no interactive prompts)
+   - Model responds within timeout
+
+2. **Status display** - Users need to see at-a-glance:
+   - Which models are available
+   - Which are in cooldown (rate-limited)
+   - Which need attention (auth issues, not installed)
+
+3. **Guidance** - When models are unavailable, guide users to install/configure the CLI tools
+
+### Model Management in UI
+
+**Status Bar (condensed):**
+```
+claude ● │ gemini ◐ │ codex ○    (●=ready, ◐=cooldown, ○=unavailable)
+```
+
+**Settings Context View (full panel):**
+- Model list with status indicators
+- Probe/refresh button
+- Cooldown timers (when rate-limited)
+- Enable/disable toggles
+- Link to CLI setup instructions
+
+**Timeline Events:**
+- Model status changes appear as system events
+- "gemini rate-limited, cooling down 60s"
+- "claude recovered, ready"
+
+### Future Considerations
+
+As the engine evolves, the Models panel may show:
+- Token usage per model
+- Cost estimates (if available from CLIs)
+- Success/failure rates
+- Average response times
+
+### Rate Limit Strategies (Future)
+
+Each CLI tool may have different mechanisms for querying rate limit status proactively (rather than just detecting failures):
+
+| CLI | Potential Approach | Notes |
+|-----|-------------------|-------|
+| `claude` | `claude usage` or API headers | Check Anthropic CLI for usage commands |
+| `codex` | OpenAI usage API | May need API key for direct queries |
+| `gemini` | `gcloud` quota APIs | Google Cloud has quota management |
+
+**Benefits of proactive rate limit awareness:**
+- Show remaining quota before hitting limits
+- Smarter model selection (prefer models with headroom)
+- Warn users before exhausting quota
+- Estimate "runs remaining" based on typical token usage
+
+**Implementation considerations:**
+- Cache results (don't query on every iteration)
+- Graceful fallback if query not supported
+- Per-model strategy abstraction in engine
+
+---
+
 ## Architecture
 
 ### Component Hierarchy
@@ -20,7 +103,7 @@ This document outlines the development plan for ralf's terminal user interface. 
 App
 ├── StatusBar
 │   └── [phase] │ [title] │ [model] │ [file:line] │ [metric] │ [next action]
-├── HeartbeatRow (optional, togglable)
+├── HeartbeatRow (default: enabled, togglable via config)
 │   └── ━━ file.rs +12 ━━ other.rs ~3 ━━━━━━━━━━━━━━━━━━━━━━
 ├── MainArea
 │   ├── TimelinePane (left, persistent)
@@ -218,7 +301,7 @@ crates/ralf-tui/src/
 │
 ├── layout/
 │   ├── mod.rs
-│   ├── two_pane.rs     # Main split layout
+│   ├── shell.rs        # Main shell layout (status bar, panes, footer)
 │   └── screen_modes.rs # Focus modes
 │
 ├── widgets/
@@ -268,15 +351,28 @@ crates/ralf-tui/src/
 
 ---
 
+## Resolved Questions
+
+1. **Thread selection:** Thread picker (Ctrl+T) is an overlay modal that appears over the current view. Lists recent threads with status indicators. Can create new thread from picker.
+
+2. **No-thread view:** When no thread is loaded (app start or after closing last thread), show a welcome/thread picker screen with:
+   - Recent threads list
+   - "New Thread" option
+   - Quick keyboard: `n` for new, numbers for recent threads
+
+3. **Recovery flow:** When TUI is closed during Running phase:
+   - Thread state persists to disk (already in state machine design)
+   - On relaunch, show thread in its saved state (Running/Stuck/etc.)
+   - User can resume, abort, or revise spec
+   - No automatic resumption - user must explicitly continue
+
 ## Open Questions
 
-1. **Thread selection:** Where does thread picker (Ctrl+T) live? Overlay? Separate screen?
+1. **Settings integration:** Settings screen from M4 - incorporate into command palette or keep separate?
 
-2. **Settings integration:** Settings screen from M4 - incorporate into command palette or keep separate?
+2. **Model output streaming:** How do we get real-time model output into RunOutput view? Engine API changes needed?
 
-3. **Model output streaming:** How do we get real-time model output into RunOutput view? Engine API changes needed?
-
-4. **File change detection:** How do we detect file changes for activity indicators? Watch filesystem or parse model output?
+3. **File change detection:** How do we detect file changes for activity indicators? Watch filesystem or parse model output?
 
 ---
 
@@ -286,3 +382,5 @@ crates/ralf-tui/src/
 |------|--------|
 | 2025-01-08 | Initial plan created |
 | 2025-01-08 | Added TUI_STYLE_GUIDE.md reference |
+| 2025-01-08 | Added HeartbeatRow default (enabled), resolved thread picker and recovery flow questions |
+| 2025-01-08 | Added CLI-First Model Architecture section documenting dependency on CLI tools and model management UI design |

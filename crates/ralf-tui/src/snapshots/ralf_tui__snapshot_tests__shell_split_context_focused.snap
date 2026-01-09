@@ -1,0 +1,28 @@
+---
+source: crates/ralf-tui/src/lib.rs
+expression: result
+---
+● Drafting │ "New Thread" │ claude
+╭ Timeline ────────────────────╮┏ Context ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+│Timeline events will appear he│┃Context view will appear here...              ┃
+│                              │┃                                              ┃
+│                              │┃                                              ┃
+│                              │┃                                              ┃
+│                              │┃                                              ┃
+│                              │┃                                              ┃
+│                              │┃                                              ┃
+│                              │┃                                              ┃
+│                              │┃                                              ┃
+│                              │┃                                              ┃
+│                              │┃                                              ┃
+│                              │┃                                              ┃
+│                              │┃                                              ┃
+│                              │┃                                              ┃
+│                              │┃                                              ┃
+│                              │┃                                              ┃
+│                              │┃                                              ┃
+│                              │┃                                              ┃
+│                              │┃                                              ┃
+│                              │┃                                              ┃
+╰──────────────────────────────╯┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+[Tab] Focus │ [1/2/3] Modes │ [?] Help │ [q] Quit

@@ -1,24 +1,41 @@
 //! ralf-tui: Terminal UI for multi-model autonomous loops
 //!
 //! This crate provides the TUI layer for ralf, including:
-//! - Welcome screen with model detection
-//! - Setup screen for configuration
-//! - Shared widgets (tabs, log viewers)
+//! - M5-A Shell: Core two-pane layout with status bar and footer
+//! - Theme support with Catppuccin colors
+//! - Icon support with Nerd/Unicode/ASCII modes
 //! - Headless mode for testing and automation
+//!
+//! ## M5-A Shell (New)
+//!
+//! The new shell implementation provides:
+//! - [`layout`] - Shell layout with 4 regions
+//! - [`theme`] - Colors, icons, and borders
+//! - [`widgets`] - Status bar, footer hints, panes
+//! - [`shell`] - Main app and run function
 
 mod app;
 mod event;
 pub mod headless;
+pub mod layout;
 mod screens;
+pub mod shell;
 #[cfg(test)]
 pub mod test_utils;
+pub mod theme;
 mod ui;
+pub mod widgets;
 
 use screens::Screen as ScreenTrait;
 
 pub use app::{App, Screen};
 pub use event::{Action, Event, EventHandler};
 pub use ralf_engine;
+
+// Re-export M5-A shell components
+pub use layout::{FocusedPane, ScreenMode};
+pub use shell::{run_shell, ShellApp, UiConfig};
+pub use theme::{BorderSet, IconMode, IconSet, Theme};
 
 use crossterm::{
     cursor::Show as ShowCursor,
@@ -72,6 +89,32 @@ pub async fn run_tui(repo_path: &Path) -> Result<(), Box<dyn std::error::Error>>
     terminal.show_cursor()?;
 
     result
+}
+
+/// Run the M5-A shell TUI.
+///
+/// This is the new shell implementation with:
+/// - Two-pane layout (Timeline | Context)
+/// - Status bar and footer hints
+/// - Focus management and screen modes
+/// - Catppuccin theme and icon support
+pub fn run_shell_tui() -> Result<(), Box<dyn std::error::Error>> {
+    // Setup terminal with RAII guard for cleanup
+    enable_raw_mode()?;
+    let _guard = TerminalGuard;
+
+    let mut stdout = stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    // Run the shell
+    shell::run_shell(&mut terminal)?;
+
+    // Restore cursor before guard drops
+    terminal.show_cursor()?;
+
+    Ok(())
 }
 
 #[allow(clippy::too_many_lines)]
@@ -482,6 +525,90 @@ mod snapshot_tests {
         );
         let result = render_screen_to_string(&screens::status::StatusScreen, &app);
         assert_snapshot!("criteria_all_passed", result);
+    }
+
+    // ========================================================================
+    // M5-A Shell Layout Snapshot Tests
+    // ========================================================================
+
+    /// Helper to render the M5-A shell layout to a string.
+    fn render_shell_to_string(
+        screen_mode: layout::ScreenMode,
+        focused_pane: layout::FocusedPane,
+        width: u16,
+        height: u16,
+    ) -> String {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        let theme = theme::Theme::default();
+        let borders = theme::BorderSet::new(theme::IconMode::Unicode);
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("Failed to create terminal");
+
+        terminal
+            .draw(|frame| {
+                layout::render_shell(frame, screen_mode, focused_pane, &theme, &borders);
+            })
+            .expect("Failed to draw");
+
+        buffer_to_string(terminal.backend().buffer())
+    }
+
+    #[test]
+    fn test_snapshot_shell_split_mode() {
+        let result = render_shell_to_string(
+            layout::ScreenMode::Split,
+            layout::FocusedPane::Timeline,
+            TEST_WIDTH,
+            TEST_HEIGHT,
+        );
+        assert_snapshot!("shell_split_mode", result);
+    }
+
+    #[test]
+    fn test_snapshot_shell_split_mode_context_focused() {
+        let result = render_shell_to_string(
+            layout::ScreenMode::Split,
+            layout::FocusedPane::Context,
+            TEST_WIDTH,
+            TEST_HEIGHT,
+        );
+        assert_snapshot!("shell_split_context_focused", result);
+    }
+
+    #[test]
+    fn test_snapshot_shell_timeline_focus() {
+        let result = render_shell_to_string(
+            layout::ScreenMode::TimelineFocus,
+            layout::FocusedPane::Timeline,
+            TEST_WIDTH,
+            TEST_HEIGHT,
+        );
+        assert_snapshot!("shell_timeline_focus", result);
+    }
+
+    #[test]
+    fn test_snapshot_shell_context_focus() {
+        let result = render_shell_to_string(
+            layout::ScreenMode::ContextFocus,
+            layout::FocusedPane::Context,
+            TEST_WIDTH,
+            TEST_HEIGHT,
+        );
+        assert_snapshot!("shell_context_focus", result);
+    }
+
+    #[test]
+    fn test_snapshot_shell_too_small() {
+        // Terminal smaller than MIN_WIDTH x MIN_HEIGHT (40x12)
+        let result = render_shell_to_string(
+            layout::ScreenMode::Split,
+            layout::FocusedPane::Timeline,
+            30, // Less than MIN_WIDTH (40)
+            10, // Less than MIN_HEIGHT (12)
+        );
+        assert_snapshot!("shell_too_small", result);
     }
 }
 

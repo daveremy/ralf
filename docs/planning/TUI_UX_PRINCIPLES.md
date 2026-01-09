@@ -277,7 +277,7 @@ Ctrl+P opens command palette with consistent verbs across all phases:
 | Ctrl+G | Go to / navigate |
 | Ctrl+F | Filter timeline |
 | Ctrl+1/2/3 | Focus modes |
-| Ctrl+? or ? | Help overlay |
+| ? | Help overlay |
 | Ctrl+C | Pause (graceful stop) |
 | Ctrl+D | Cancel (abort immediately) |
 | Ctrl+Q | Quit |
@@ -320,7 +320,7 @@ Use color consistently and sparingly to convey meaning:
 | **Red** | Failure, error | ✗ marks, failed checks, rejected |
 | **Yellow** | Warning, attention | Warnings, rate limits, paused state |
 | **Blue** | Information, active | Current phase, focused pane border |
-| **Cyan** | Model output | Model-generated content attribution |
+| **Model colors** | Model attribution | Claude=Peach, Gemini=Blue, Codex=Green (see Style Guide) |
 | **Dim/Gray** | Secondary info | Timestamps, metadata, inactive elements |
 
 **Principles:**
@@ -514,9 +514,9 @@ Users can disable toasts or heartbeat if they find them distracting.
 
 3. **External Tool Integration**: "Open in VS Code" from Stuck/Polishing phases? (Future consideration.)
 
-4. **Assessment Phase**: AI spec review adds value but also adds a phase. Is it worth the workflow complexity?
-
 *Note: "Live Diff During Run" was previously an open question, now addressed in the "Codebase Activity Visibility" section.*
+
+*Note: "Assessment Phase" was resolved - yes, keep it. AI spec review catches issues early before expensive run iterations. The Drafting→Assessing→Finalized flow is valuable.*
 
 ---
 

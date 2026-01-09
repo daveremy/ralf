@@ -59,6 +59,7 @@ ralf run --max-iterations 50
 |-----------|--------------------------------------------------|
 | `ralf`    | Open the TUI (default)                          |
 | `tui`     | Open the TUI (explicit)                         |
+| `shell`   | Open M5-A shell (new TUI architecture preview)  |
 | `doctor`  | Detect models and print diagnostics             |
 | `init`    | Initialize `.ralf/` directory and config        |
 | `probe`   | Probe models with timeout                       |
@@ -77,11 +78,18 @@ ralf run --max-iterations 50
 
 ## Requirements
 
-- Git (recommended)
-- At least one model CLI installed:
-  - `claude` (Anthropic CLI)
-  - `codex` (OpenAI Codex CLI)
-  - `gemini` (Google Gemini CLI)
+**ralf orchestrates existing AI CLI tools** - it doesn't manage API keys directly. You must have at least one model CLI installed and authenticated:
+
+| CLI Tool | Install | Auth |
+|----------|---------|------|
+| `claude` | [Anthropic CLI](https://docs.anthropic.com/claude/docs/claude-code) | `claude auth` |
+| `codex` | [OpenAI Codex](https://github.com/openai/codex) | `codex auth` |
+| `gemini` | [Google Gemini CLI](https://github.com/google/generative-ai-cli) | `gcloud auth` |
+
+Run `ralf doctor` to check which models are available.
+
+**Other requirements:**
+- Git (recommended for branch management)
 
 ## Contributing
 
