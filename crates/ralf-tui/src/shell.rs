@@ -5,10 +5,13 @@
 //! - Status bar and footer hints
 //! - Focus management and screen modes
 //! - Theme and icon support
+//! - Model discovery and probing
 //!
-//! See SPEC-m5a-tui-shell.md for full specification.
+//! See SPEC-m5a-tui-shell.md and SPEC-m5a1-model-probing.md for full specification.
 
 use std::io;
+use std::sync::mpsc;
+use std::thread;
 use std::time::Duration;
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent};
@@ -17,7 +20,9 @@ use crossterm::event::KeyModifiers;
 use ratatui::{backend::Backend, Terminal};
 
 use crate::layout::{render_shell, FocusedPane, ScreenMode, MIN_HEIGHT, MIN_WIDTH};
+use crate::models::ModelStatus;
 use crate::theme::{BorderSet, IconMode, IconSet, Theme};
+use ralf_engine::discovery::{discover_models, probe_model, KNOWN_MODELS};
 
 /// UI configuration (from environment or config file).
 #[derive(Debug, Clone)]
@@ -63,6 +68,12 @@ pub struct ShellApp {
     pub terminal_size: (u16, u16),
     /// Should the app quit?
     pub should_quit: bool,
+    /// Model status from probing.
+    pub models: Vec<ModelStatus>,
+    /// Whether initial probe is complete.
+    pub probe_complete: bool,
+    /// Whether to show the models panel in the context pane.
+    pub show_models_panel: bool,
 }
 
 impl Default for ShellApp {
@@ -78,6 +89,12 @@ impl ShellApp {
         let icons = IconSet::new(ui_config.icons);
         let borders = BorderSet::new(ui_config.icons);
 
+        // Initialize models with "Probing" state
+        let models: Vec<ModelStatus> = KNOWN_MODELS
+            .iter()
+            .map(|name| ModelStatus::probing(name))
+            .collect();
+
         Self {
             screen_mode: ScreenMode::default(),
             focused_pane: FocusedPane::default(),
@@ -87,6 +104,9 @@ impl ShellApp {
             borders,
             terminal_size: (80, 24), // Default, updated on first render
             should_quit: false,
+            models,
+            probe_complete: false,
+            show_models_panel: true, // Show by default until a thread is loaded
         }
     }
 
@@ -95,18 +115,26 @@ impl ShellApp {
         self.terminal_size.0 < MIN_WIDTH || self.terminal_size.1 < MIN_HEIGHT
     }
 
+    /// Check if ASCII mode is enabled (for `NO_COLOR` support).
+    pub fn is_ascii_mode(&self) -> bool {
+        matches!(self.ui_config.icons, IconMode::Ascii)
+    }
+
     /// Handle keyboard input.
-    pub fn handle_key_event(&mut self, key: KeyEvent) {
+    pub fn handle_key_event(&mut self, key: KeyEvent) -> Option<ShellAction> {
         match key.code {
             // Screen modes - support both Ctrl+N and plain N, plus F-keys
             KeyCode::Char('1') | KeyCode::F(1) => {
                 self.screen_mode = ScreenMode::Split;
+                None
             }
             KeyCode::Char('2') | KeyCode::F(2) => {
                 self.screen_mode = ScreenMode::TimelineFocus;
+                None
             }
             KeyCode::Char('3') | KeyCode::F(3) => {
                 self.screen_mode = ScreenMode::ContextFocus;
+                None
             }
 
             // Focus management - only effective in Split mode
@@ -115,6 +143,12 @@ impl ShellApp {
                     self.focused_pane = self.focused_pane.toggle();
                 }
                 // In non-Split modes, Tab is a no-op
+                None
+            }
+
+            // Refresh models - only when models panel is visible and not already probing
+            KeyCode::Char('r') if self.show_models_panel && self.probe_complete => {
+                Some(ShellAction::RefreshModels)
             }
 
             // Help overlay - placeholder for M5-A, implemented in M5-C
@@ -123,9 +157,10 @@ impl ShellApp {
             // Quit
             KeyCode::Char('q') | KeyCode::Esc => {
                 self.should_quit = true;
+                None
             }
 
-            _ => {}
+            _ => None,
         }
     }
 
@@ -133,6 +168,57 @@ impl ShellApp {
     pub fn handle_resize(&mut self, width: u16, height: u16) {
         self.terminal_size = (width, height);
     }
+
+    /// Update models with probe results.
+    pub fn update_models(&mut self, models: Vec<ModelStatus>) {
+        self.models = models;
+        self.probe_complete = true;
+    }
+
+    /// Start probing models and update them as results arrive.
+    ///
+    /// Returns a receiver that will receive model statuses as probes complete.
+    pub fn start_probing(&self) -> mpsc::Receiver<ModelStatus> {
+        probe_models_parallel(Duration::from_secs(10))
+    }
+}
+
+/// Actions that the shell can request from the main loop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellAction {
+    /// Refresh all model probes.
+    RefreshModels,
+}
+
+/// Probe all known models in parallel, returning results via a channel.
+///
+/// Each probe has a 10-second timeout. Results are sent as they complete.
+fn probe_models_parallel(timeout: Duration) -> mpsc::Receiver<ModelStatus> {
+    let (tx, rx) = mpsc::channel();
+
+    // Discover models first (quick, checks if binary exists)
+    let discovery = discover_models();
+
+    for info in discovery.models {
+        let tx = tx.clone();
+        let name = info.name.clone();
+        let info_clone = info.clone();
+
+        thread::spawn(move || {
+            // Only probe if the model was found
+            let status = if info_clone.found {
+                let probe = probe_model(&name, timeout);
+                ModelStatus::from_engine(&info_clone, Some(&probe))
+            } else {
+                ModelStatus::from_engine(&info_clone, None)
+            };
+
+            // Send result (ignore error if receiver was dropped)
+            let _ = tx.send(status);
+        });
+    }
+
+    rx
 }
 
 /// Run the shell app main loop.
@@ -144,7 +230,28 @@ pub fn run_shell<B: Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
         app.terminal_size = (size.width, size.height);
     }
 
+    // Start probing models in parallel
+    let mut probe_rx = Some(app.start_probing());
+    let mut pending_probes = KNOWN_MODELS.len();
+
     loop {
+        // Check for completed probes (non-blocking)
+        if let Some(ref rx) = probe_rx {
+            while let Ok(status) = rx.try_recv() {
+                // Update the model in our list
+                if let Some(model) = app.models.iter_mut().find(|m| m.name == status.name) {
+                    *model = status;
+                }
+                pending_probes = pending_probes.saturating_sub(1);
+            }
+
+            // If all probes complete, drop the receiver
+            if pending_probes == 0 {
+                app.probe_complete = true;
+                probe_rx = None;
+            }
+        }
+
         // Render
         terminal.draw(|frame| {
             render_shell(
@@ -153,6 +260,9 @@ pub fn run_shell<B: Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
                 app.focused_pane,
                 &app.theme,
                 &app.borders,
+                &app.models,
+                app.is_ascii_mode(),
+                app.show_models_panel,
             );
         })?;
 
@@ -160,7 +270,20 @@ pub fn run_shell<B: Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
         if event::poll(Duration::from_millis(16))? {
             match event::read()? {
                 Event::Key(key) => {
-                    app.handle_key_event(key);
+                    if let Some(action) = app.handle_key_event(key) {
+                        match action {
+                            ShellAction::RefreshModels => {
+                                // Reset models to probing state and start new probes
+                                app.models = KNOWN_MODELS
+                                    .iter()
+                                    .map(|name| ModelStatus::probing(name))
+                                    .collect();
+                                app.probe_complete = false;
+                                probe_rx = Some(app.start_probing());
+                                pending_probes = KNOWN_MODELS.len();
+                            }
+                        }
+                    }
                 }
                 Event::Resize(width, height) => {
                     app.handle_resize(width, height);
@@ -187,6 +310,9 @@ mod tests {
         assert_eq!(app.screen_mode, ScreenMode::Split);
         assert_eq!(app.focused_pane, FocusedPane::Timeline);
         assert!(!app.should_quit);
+        assert!(!app.probe_complete);
+        assert!(app.show_models_panel);
+        assert_eq!(app.models.len(), KNOWN_MODELS.len());
     }
 
     #[test]
@@ -286,5 +412,55 @@ mod tests {
         let config = UiConfig::from_env();
         // Without NO_COLOR set, should default to Nerd
         assert!(matches!(config.icons, IconMode::Nerd | IconMode::Ascii));
+    }
+
+    #[test]
+    fn test_refresh_models_when_panel_visible_and_complete() {
+        let mut app = ShellApp::new();
+        app.show_models_panel = true;
+        app.probe_complete = true;
+
+        // 'r' should trigger RefreshModels when models panel is visible and probe complete
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+        assert_eq!(action, Some(ShellAction::RefreshModels));
+    }
+
+    #[test]
+    fn test_refresh_models_noop_when_panel_hidden() {
+        let mut app = ShellApp::new();
+        app.show_models_panel = false;
+        app.probe_complete = true;
+
+        // 'r' should do nothing when models panel is not visible
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+        assert_eq!(action, None);
+    }
+
+    #[test]
+    fn test_refresh_models_noop_during_probing() {
+        let mut app = ShellApp::new();
+        app.show_models_panel = true;
+        app.probe_complete = false; // Still probing
+
+        // 'r' should do nothing while probing is in progress
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+        assert_eq!(action, None);
+    }
+
+    #[test]
+    fn test_is_ascii_mode() {
+        let mut app = ShellApp::new();
+
+        // Default should be Nerd mode (not ASCII)
+        app.ui_config.icons = IconMode::Nerd;
+        assert!(!app.is_ascii_mode());
+
+        // ASCII mode should return true
+        app.ui_config.icons = IconMode::Ascii;
+        assert!(app.is_ascii_mode());
+
+        // Unicode mode should return false
+        app.ui_config.icons = IconMode::Unicode;
+        assert!(!app.is_ascii_mode());
     }
 }
