@@ -31,7 +31,8 @@ pub enum Command {
     Canvas,
     Refresh,
     Clear,
-    Model(Option<String>),  // /model [name]
+    Search(Option<String>),  // /search [query] - future
+    Model(Option<String>),   // /model [name]
     Copy,
     Editor,
 
@@ -76,6 +77,7 @@ pub struct CommandInfo {
 | `/canvas` | `/3` | `Ctrl+3` | Focus canvas mode |
 | `/refresh` | — | `Ctrl+R` | Refresh model status |
 | `/clear` | — | `Ctrl+L` | Clear conversation |
+| `/search` | `/find` | `Ctrl+F` | Search timeline (future) |
 | `/model` | — | — | Switch active model (takes argument) |
 | `/copy` | — | — | Copy last response to clipboard |
 | `/editor` | — | — | Open in $EDITOR |
@@ -106,6 +108,12 @@ match key.code {
     }
     KeyCode::Char('l') if key.modifiers.contains(KeyModifiers::CONTROL) => {
         self.clear_conversation();
+    }
+    KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        self.start_search();  // Future: timeline search
+    }
+    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        self.graceful_pause();  // Trap SIGINT, don't kill process
     }
 
     // Tab for focus (no modifier needed - not a character)
@@ -147,6 +155,55 @@ fn escape_cascade(&mut self) {
     }
 }
 ```
+
+### 4a. Slash Escaping
+
+To send a message that starts with `/` (e.g., discussing `/etc/config`), use `//` at the start:
+
+| Input | Result |
+|-------|--------|
+| `/help` | Executes help command |
+| `//etc/config` | Sends message "/etc/config" |
+| `hello /world` | Sends message "hello /world" (no escape needed) |
+
+```rust
+fn submit_input(&mut self) {
+    let content = self.input.content().trim();
+
+    if content.starts_with("//") {
+        // Escaped slash - send as message with single /
+        let message = format!("/{}", &content[2..]);
+        self.send_message(&message);
+    } else if is_command(content) {
+        // Execute command
+        self.execute_command(parse_command(content));
+    } else {
+        // Regular message
+        self.send_message(content);
+    }
+    self.input.clear();
+}
+```
+
+### 4b. Signal Handling (Ctrl+C)
+
+`Ctrl+C` must be trapped to prevent SIGINT from killing the process without saving state:
+
+```rust
+// In main.rs or shell setup
+fn setup_signal_handlers() {
+    // Use ctrlc crate or tokio::signal
+    ctrlc::set_handler(move || {
+        // Send graceful pause signal to app
+        // Don't call std::process::exit()
+    }).expect("Error setting Ctrl-C handler");
+}
+```
+
+**Behavior:**
+- During active operation: Graceful pause (finish current step, save state)
+- When idle: Same as `/quit` (prompt if unsaved changes)
+- Never abruptly terminates without cleanup
 
 ### 5. Help Overlay
 
@@ -351,7 +408,7 @@ crates/ralf-tui/src/
 
 1. **Input-first**: All character keys go to input when conversation pane is focused
 2. **Slash commands work**: `/quit`, `/help`, `/split`, `/focus`, `/canvas`, `/refresh`, `/clear` execute correctly
-3. **Keybindings work**: `Ctrl+1/2/3`, `F1`, `Ctrl+R`, `Ctrl+L`, `Escape` work as alternates
+3. **Keybindings work**: `Ctrl+1/2/3`, `F1`, `Ctrl+R`, `Ctrl+L`, `Ctrl+C`, `Escape` work as alternates
 4. **Help overlay**: `/help` or `F1` shows context-aware command list
 5. **Autocomplete**: Typing `/` shows completion popup
 6. **Escape cascade**: Escape clears input → cancels → quits (in order)
@@ -359,6 +416,8 @@ crates/ralf-tui/src/
 8. **Footer hints**: Show slash command style (`Tab:Switch  /:Commands  Esc:Quit`)
 9. **Unknown commands**: Show error toast for unrecognized commands
 10. **Phase commands**: Show "not available" for wrong-phase commands
+11. **Slash escaping**: `//foo` sends message "/foo" (escaped slash)
+12. **Signal handling**: `Ctrl+C` triggers graceful pause, not process termination
 
 ## Non-Goals
 
@@ -366,7 +425,9 @@ crates/ralf-tui/src/
 - Model switching implementation (`/model` shows "not implemented")
 - Clipboard integration (`/copy` shows "not implemented")
 - $EDITOR integration (`/editor` shows "not implemented")
+- Timeline search implementation (`/search` shows "not implemented")
 - Command history (up arrow for previous commands)
+- Vim-style `/` search (conflicts with slash commands; use `Ctrl+F` or `/search`)
 
 These are deferred to M5-B.3b and beyond.
 
