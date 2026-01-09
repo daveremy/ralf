@@ -481,6 +481,41 @@ Build remaining context views for full workflow support.
 
 **Exit Criteria:** Can walk through entire workflow (Draft → Run → Review → Commit) with appropriate views at each phase.
 
+#### M5-B.5: Thread Management
+**Spec:** `SPEC-m5b5-thread-management.md`
+
+Complete thread lifecycle management for the TUI and CLI.
+
+**Background:**
+Users need to manage multiple threads (tasks) over time - resuming previous work, organizing threads by name, cleaning up completed work. Claude Code provides `-c` (continue last) and `-r` (recent picker). ralf improves on this with named threads and richer management.
+
+**CLI Deliverables:**
+- `ralf shell -c` - Continue last active thread
+- `ralf shell -r` - Show thread picker (interactive)
+- `ralf shell <name>` - Resume thread by name
+- `ralf shell --new [name]` - Create new thread with optional name
+- `ralf threads` - List all threads (non-interactive)
+- `ralf threads rm <name>` - Delete thread
+
+**TUI Deliverables:**
+- Thread picker overlay (`Ctrl+T` or `/threads`)
+- No-thread welcome screen with recent threads list
+- `/resume [name]` - Resume by name or show picker
+- `/new [name]` - Create new thread
+- `/rename <name>` - Rename current thread
+- `/close` - Close current thread (return to welcome)
+- Thread name in status bar
+- Thread auto-naming from first message (can override)
+
+**Thread Features:**
+- Named threads (user-provided or auto-generated)
+- Thread states: Active, Suspended, Completed, Abandoned
+- Thread persistence to `.ralf/threads/`
+- Thread search/filter in picker
+- Crash recovery (resume interrupted thread)
+
+**Exit Criteria:** Can launch ralf and resume a previous thread by name. Can manage threads from CLI without entering TUI. Thread picker shows filterable list with names and status.
+
 ---
 
 ### Phase 3: Activity & Polish (M5-C)
@@ -528,7 +563,8 @@ M5-B (Conversation & Artifacts)
   │   ├── M5-B.3b (Chat Integration)
   │   ├── M5-B.3c (Spec Artifact View)
   │   └── M5-B.3d (Run Artifact Views)
-  └── M5-B.4 (Advanced Artifact Views)
+  ├── M5-B.4 (Advanced Artifact Views)
+  └── M5-B.5 (Thread Management)
   │
   ▼
 M5-C (Activity & Polish)
@@ -544,6 +580,8 @@ Each major phase builds on the previous. No parallel development between major p
 - M5-B.3b → M5-B.3c: Spec artifact needs chat to produce content
 - M5-B.3c → M5-B.3d: Run artifacts follow same pattern
 - M5-B.3 and M5-B.4 could potentially overlap once conversation layer is ready
+- M5-B.4 → M5-B.5: Thread management needs all views in place
+- M5-B.5 could start earlier for CLI-only features (ralf threads)
 
 **Within M5-C**, activity features and polish features can be developed independently.
 
@@ -692,3 +730,4 @@ crates/ralf-tui/src/
 | 2026-01-08 | Added Input Handling section: keyboard-first with mouse support, vi-style navigation |
 | 2026-01-09 | Broke M5-B.3 into subphases: B.3a SpecEditor, B.3b RunOutput, B.3c Summary. Marked B.1, B.2 complete. |
 | 2026-01-09 | Completed M5-B.3a (Timeline Input). Added M5-B.3a' (Slash Commands) after UX analysis revealed input-first model needed. Updated TUI_UX_PRINCIPLES.md with slash command system design. |
+| 2026-01-09 | Added M5-B.5 (Thread Management) for CLI flags (-c, -r) and TUI thread picker. Improves on Claude Code with named threads. |
