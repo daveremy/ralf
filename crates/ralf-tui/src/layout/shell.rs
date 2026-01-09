@@ -11,10 +11,18 @@ use ratatui::{
     Frame,
 };
 
+use ratatui::{
+    style::{Color, Style},
+    text::Span,
+    widgets::{Block, Borders, Clear, Paragraph},
+};
+
 use super::screen_modes::{FocusedPane, ScreenMode};
 use crate::{
     models::ModelStatus,
+    shell::{TimelinePaneBounds, Toast},
     theme::{BorderSet, Theme},
+    timeline::{TimelineState, TimelineWidget},
     widgets::{FooterHints, KeyHint, ModelsPanel, Pane, StatusBar, StatusBarContent},
 };
 
@@ -34,6 +42,9 @@ pub fn render_shell(
     models: &[ModelStatus],
     ascii_mode: bool,
     show_models_panel: bool,
+    timeline: &TimelineState,
+    timeline_bounds: &mut TimelinePaneBounds,
+    toast: Option<&Toast>,
 ) {
     let area = frame.area();
 
@@ -69,6 +80,8 @@ pub fn render_shell(
         models,
         ascii_mode,
         show_models_panel,
+        timeline,
+        timeline_bounds,
     );
 
     // Footer with keybinding hints (include 'r' for refresh when models panel is visible)
@@ -79,6 +92,47 @@ pub fn render_shell(
     }
     let footer = FooterHints::new(&hints, theme);
     frame.render_widget(footer, chunks[2]);
+
+    // Render toast notification if present
+    if let Some(toast) = toast {
+        render_toast(frame, area, toast);
+    }
+}
+
+/// Render a toast notification centered at the bottom of the screen.
+fn render_toast(frame: &mut Frame<'_>, area: Rect, toast: &Toast) {
+    // Calculate toast dimensions (cap at terminal width)
+    #[allow(clippy::cast_possible_truncation)]
+    let text_len = toast.message.len().min(200) as u16; // cap at 200 chars
+    let toast_width = (text_len + 4).min(area.width.saturating_sub(4)); // padding, constrain to area
+    let toast_height = 3; // border + text + border
+
+    // Position: centered horizontally, above footer
+    let x = area.x + (area.width.saturating_sub(toast_width)) / 2;
+    let y = area.y + area.height.saturating_sub(toast_height + 2); // +2 for footer
+
+    let toast_area = Rect::new(x, y, toast_width, toast_height);
+
+    // Clear the area behind the toast
+    frame.render_widget(Clear, toast_area);
+
+    // Render toast with green background for success
+    let is_error = toast.message.contains("failed") || toast.message.contains("unavailable");
+    let bg_color = if is_error {
+        Color::Red
+    } else {
+        Color::Green
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .style(Style::default().bg(bg_color).fg(Color::White));
+
+    let paragraph = Paragraph::new(Span::raw(&toast.message))
+        .block(block)
+        .style(Style::default().bg(bg_color).fg(Color::White));
+
+    frame.render_widget(paragraph, toast_area);
 }
 
 /// Render the main two-pane area based on screen mode.
@@ -93,6 +147,8 @@ fn render_main_area(
     models: &[ModelStatus],
     ascii_mode: bool,
     show_models_panel: bool,
+    timeline: &TimelineState,
+    timeline_bounds: &mut TimelinePaneBounds,
 ) {
     match screen_mode {
         ScreenMode::Split => {
@@ -107,7 +163,8 @@ fn render_main_area(
                 chunks[0],
                 focused_pane == FocusedPane::Timeline,
                 theme,
-                borders,
+                timeline,
+                timeline_bounds,
             );
             render_context_pane(
                 frame,
@@ -122,7 +179,7 @@ fn render_main_area(
         }
         ScreenMode::TimelineFocus => {
             // Focus mode: only timeline visible, always focused
-            render_timeline_pane(frame, area, true, theme, borders);
+            render_timeline_pane(frame, area, true, theme, timeline, timeline_bounds);
         }
         ScreenMode::ContextFocus => {
             // Focus mode: only context visible, always focused
@@ -137,17 +194,21 @@ fn render_timeline_pane(
     area: Rect,
     focused: bool,
     theme: &Theme,
-    borders: &BorderSet,
+    timeline: &TimelineState,
+    timeline_bounds: &mut TimelinePaneBounds,
 ) {
-    let pane = Pane::new(theme, borders)
-        .title(" Timeline ")
-        .focused(focused)
-        .content("Timeline events will appear here...");
+    // Calculate inner area (accounting for 1-pixel border on all sides)
+    // This is used for mouse coordinate translation
+    timeline_bounds.inner_x = area.x.saturating_add(1);
+    timeline_bounds.inner_y = area.y.saturating_add(1);
+    timeline_bounds.inner_width = area.width.saturating_sub(2);
+    timeline_bounds.inner_height = area.height.saturating_sub(2);
 
-    frame.render_widget(pane, area);
+    let widget = TimelineWidget::new(timeline, theme).focused(focused);
+    frame.render_widget(widget, area);
 }
 
-/// Render the context pane.
+/// Render the context pane (right side - shows Models or Context content).
 #[allow(clippy::too_many_arguments)]
 fn render_context_pane(
     frame: &mut Frame<'_>,
@@ -161,7 +222,9 @@ fn render_context_pane(
 ) {
     if show_models_panel {
         // Render Models panel instead of generic Context pane
-        let models_panel = ModelsPanel::new(models, theme).ascii_mode(ascii_mode);
+        let models_panel = ModelsPanel::new(models, theme)
+            .ascii_mode(ascii_mode)
+            .focused(focused);
         frame.render_widget(models_panel, area);
     } else {
         let pane = Pane::new(theme, borders)
