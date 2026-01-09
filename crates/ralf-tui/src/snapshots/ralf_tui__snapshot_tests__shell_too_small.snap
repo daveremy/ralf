@@ -1,0 +1,5 @@
+---
+source: crates/ralf-tui/src/lib.rs
+expression: result
+---
+● Warning │ "Terminal too smal

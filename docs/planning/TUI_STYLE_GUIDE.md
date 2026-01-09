@@ -179,7 +179,7 @@ Recommended fonts: [Meslo LG Nerd Font](https://www.nerdfonts.com/), Hack Nerd F
 | Spec/Chat | `󰭻` (nf-md-message) | `💬` | `[S]` | Lavender |
 | Run/Iteration | `󱐋` (nf-md-lightning_bolt) | `⚡` | `[R]` | Yellow |
 | Review | `󰈈` (nf-md-eye) | `👁` | `[V]` | Blue |
-| System | `󰒓` (nf-md-cog) | `⚙` | `[*]` | Dim |
+| System | `󰒓` (nf-md-cog) | `⚙` | `[.]` | Dim |
 | **Git/Files** |
 | File Added | `󰐕` (nf-md-plus) | `+` | `+` | Green |
 | File Modified | `󰦒` (nf-md-pencil) | `~` | `~` | Yellow |
