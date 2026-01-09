@@ -435,8 +435,16 @@ Wire the input to the chat system, creating SpecEvents from user/AI messages.
 - Thread creation on first message
 - Thread.draft feedback loop (extracted spec fed to AI)
 - Thread persistence (save after AI responses)
+- **Live model status updates:**
+  - Cache model status to `.ralf/models.json` (no probe on every startup)
+  - Update status on API success → "Ready"
+  - Update status on rate limit → "Rate Limited" + cooldown timer
+  - Update status on auth failure → "Auth Required"
+  - Update status on error/timeout → "Unavailable"
+  - Status bar shows live cooldown timers
+  - Manual refresh via `/refresh` or `Ctrl+R`
 
-**Exit Criteria:** Can chat with AI, messages appear in timeline as SpecEvents, thread is created and persisted.
+**Exit Criteria:** Can chat with AI, messages appear in timeline as SpecEvents, thread is created and persisted. Model status updates based on actual API interactions.
 
 ##### M5-B.3c: Spec Artifact View
 **Spec:** `SPEC-m5b3c-spec-artifact.md`
