@@ -29,7 +29,7 @@ use crate::timeline::{
     EventKind, ReviewEvent, ReviewResult, RunEvent, SpecEvent, SystemEvent, TimelineState,
     SCROLL_SPEED,
 };
-use ralf_engine::discovery::{discover_models, probe_model, KNOWN_MODELS};
+use ralf_engine::discovery::{discover_models, probe_model_with_info, KNOWN_MODELS};
 
 /// Maximum time between clicks to count as double-click.
 const DOUBLE_CLICK_THRESHOLD: Duration = Duration::from_millis(500);
@@ -500,13 +500,12 @@ fn probe_models_parallel(timeout: Duration) -> mpsc::Receiver<ModelStatus> {
 
     for info in discovery.models {
         let tx = tx.clone();
-        let name = info.name.clone();
         let info_clone = info.clone();
 
         thread::spawn(move || {
             // Only probe if the model was found
             let status = if info_clone.found {
-                let probe = probe_model(&name, timeout);
+                let probe = probe_model_with_info(&info_clone, timeout);
                 ModelStatus::from_engine(&info_clone, Some(&probe))
             } else {
                 ModelStatus::from_engine(&info_clone, None)

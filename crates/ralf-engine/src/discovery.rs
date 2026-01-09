@@ -124,9 +124,21 @@ pub struct ProbeResult {
 }
 
 /// Probe a model with a simple test prompt.
+///
+/// This is a convenience function that discovers the model first.
+/// If you already have a `ModelInfo`, use [`probe_model_with_info`] instead
+/// to avoid redundant discovery.
 pub fn probe_model(name: &str, timeout: Duration) -> ProbeResult {
+    let info = discover_model(name);
+    probe_model_with_info(&info, timeout)
+}
+
+/// Probe a model with a simple test prompt, using pre-discovered model info.
+///
+/// This avoids redundant discovery when you already have the `ModelInfo`.
+pub fn probe_model_with_info(info: &ModelInfo, timeout: Duration) -> ProbeResult {
     let mut result = ProbeResult {
-        name: name.to_string(),
+        name: info.name.clone(),
         success: false,
         response_time_ms: None,
         needs_auth: false,
@@ -136,18 +148,18 @@ pub fn probe_model(name: &str, timeout: Duration) -> ProbeResult {
         suggestions: Vec::new(),
     };
 
-    // First check if the model is discoverable
-    let info = discover_model(name);
     if !info.found {
-        result.issues.push(format!("{name} not found on PATH"));
+        result
+            .issues
+            .push(format!("{} not found on PATH", info.name));
         result
             .suggestions
-            .push(format!("Install {name} CLI and add to PATH"));
+            .push(format!("Install {} CLI and add to PATH", info.name));
         return result;
     }
 
     if !info.callable {
-        result.issues.extend(info.issues);
+        result.issues.extend(info.issues.clone());
         return result;
     }
 
@@ -155,7 +167,7 @@ pub fn probe_model(name: &str, timeout: Duration) -> ProbeResult {
     let start = std::time::Instant::now();
 
     // Use a simple echo-like prompt that should return quickly
-    let probe_result = run_probe_command(name, timeout);
+    let probe_result = run_probe_command(&info.name, timeout);
 
     match probe_result {
         Ok(output) => {
@@ -200,9 +212,10 @@ pub fn probe_model(name: &str, timeout: Duration) -> ProbeResult {
                     // Auth required
                     result.needs_auth = true;
                     result.issues.push("Model requires authentication".into());
-                    result
-                        .suggestions
-                        .push(format!("Run `{name} auth login` or configure credentials"));
+                    result.suggestions.push(format!(
+                        "Run `{} auth login` or configure credentials",
+                        info.name
+                    ));
                 } else {
                     // Generic failure - use error line if available
                     let message = if error_line.is_empty() {
