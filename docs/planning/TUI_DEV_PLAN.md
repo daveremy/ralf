@@ -21,29 +21,69 @@ This document outlines the development plan for ralf's terminal user interface. 
 - **Reduced complexity** - no need to configure API keys, endpoints, or credentials in ralf
 - **Security** - API keys stay in their respective CLI tool configs, not duplicated
 
+**Tradeoff:** This approach requires users to have CLI tools pre-configured, which may increase onboarding friction for users new to these tools. However, for the target audience (developers already using AI coding assistants), this is typically a non-issue.
+
 ### Supported CLI Tools
 
-| Tool | Command | Auth Method |
-|------|---------|-------------|
-| Claude Code | `claude` | Anthropic CLI auth |
-| OpenAI Codex | `codex` | OpenAI CLI auth |
-| Gemini CLI | `gemini` | Google Cloud auth |
+| Tool | Command | Auth Method | Test Command |
+|------|---------|-------------|--------------|
+| Claude Code | `claude` | Anthropic CLI auth | `claude --version` |
+| OpenAI Codex | `codex` | OpenAI CLI auth | `codex --version` |
+| Gemini CLI | `gemini` | Google Cloud auth | `gemini --version` |
 
 ### Model Discovery & Status
 
 The TUI must clearly communicate model availability:
 
 1. **Startup probe** - On launch, probe each CLI to verify:
-   - Command exists on PATH
-   - Auth is configured (no interactive prompts)
-   - Model responds within timeout
+   - Command exists on PATH (`which {tool}`)
+   - Version is compatible (`{tool} --version`)
+   - Auth is configured (probe with timeout, no interactive prompts)
+   - Model responds within timeout (default: 10s)
+
+   **Probe sequence:**
+   - Run probes in parallel for faster startup
+   - Use 10-second timeout per model (configurable)
+   - Show progressive status updates ("Checking claude... ●")
+   - Background re-probe if model recovers from cooldown
 
 2. **Status display** - Users need to see at-a-glance:
-   - Which models are available
-   - Which are in cooldown (rate-limited)
-   - Which need attention (auth issues, not installed)
+   - Which models are available (●)
+   - Which are in cooldown/rate-limited (◐)
+   - Which need attention (○) - with reason on hover/expand
 
-3. **Guidance** - When models are unavailable, guide users to install/configure the CLI tools
+3. **Error categorization** - Distinguish failure modes with specific messages:
+   - **Not installed:** "codex not found. Install: https://..."
+   - **Auth required:** "claude needs auth. Run: `claude auth login`"
+   - **Auth expired:** "gemini auth expired. Run: `gcloud auth login`"
+   - **Timeout:** "claude not responding (10s timeout)"
+   - **Rate limited:** "gemini rate-limited, cooldown 60s remaining"
+   - **Network error:** "Cannot reach API (check network)"
+
+4. **Guidance** - When models are unavailable, show actionable instructions with specific commands to run
+
+### Model Selection Strategy
+
+When multiple models are available, ralf uses this selection logic:
+
+1. **Round-robin by default** - Distribute work across available models
+2. **Skip cooling models** - Don't select models in cooldown
+3. **User preference** - Config can specify preferred model order
+4. **Fallback hierarchy:**
+   ```
+   1. Try user's preferred model (if set and available)
+   2. If rate-limited, try next available model
+   3. If all rate-limited, wait for shortest cooldown
+   4. If all unavailable, enter limited mode (spec editing only)
+   ```
+
+### Offline/Limited Mode
+
+When no models are available:
+- **Allow spec editing** - Users can still draft and refine specs
+- **Block run actions** - "Run" button disabled with explanation
+- **Show recovery path** - "0 models available. Run `ralf doctor` for help."
+- **Background retry** - Periodically re-probe (every 60s) for recovery
 
 ### Model Management in UI
 
@@ -53,16 +93,49 @@ claude ● │ gemini ◐ │ codex ○    (●=ready, ◐=cooldown, ○=unavail
 ```
 
 **Settings Context View (full panel):**
-- Model list with status indicators
-- Probe/refresh button
+- Model list with status indicators and error details
+- Probe/refresh action (`r` key)
 - Cooldown timers (when rate-limited)
-- Enable/disable toggles
-- Link to CLI setup instructions
+- Enable/disable toggles (persistent, saved to config)
+- Link to CLI setup instructions per model
+
+**Enable/Disable semantics:**
+- Disabled models are skipped during model selection
+- Setting persists to `.ralf/config.json`
+- Useful for temporarily excluding a problematic model
+- Re-enabling triggers immediate re-probe
 
 **Timeline Events:**
 - Model status changes appear as system events
 - "gemini rate-limited, cooling down 60s"
 - "claude recovered, ready"
+
+### CLI Version Management
+
+Users should know if their CLI tools are up to date:
+
+**Version checking:**
+- On startup (or periodically), check installed version vs latest available
+- Show indicator in Settings panel: "claude v1.2.3 (update available: v1.3.0)"
+- Timeline event for significant updates: "New claude version available with improved context"
+
+**Update guidance:**
+| Tool | Update Command | Notes |
+|------|---------------|-------|
+| `claude` | `claude update` or reinstall | Check Anthropic docs for canonical method |
+| `codex` | `npm update -g @openai/codex` | Assuming npm install |
+| `gemini` | `gcloud components update` | Part of gcloud SDK |
+
+**Considerations:**
+- Don't auto-update (could break user's setup)
+- Cache version check results (don't hit network on every launch)
+- Graceful fallback if version check fails (network down, API unavailable)
+- Consider minimum version requirements for ralf compatibility
+
+**Version check approaches (needs investigation):**
+- GitHub releases API for each tool
+- `{tool} --version` output parsing
+- Package manager queries (npm, homebrew, etc.)
 
 ### Future Considerations
 
@@ -72,17 +145,19 @@ As the engine evolves, the Models panel may show:
 - Success/failure rates
 - Average response times
 
-### Rate Limit Strategies (Future)
+### Rate Limit Strategies (Future - Needs Investigation)
 
 Each CLI tool may have different mechanisms for querying rate limit status proactively (rather than just detecting failures):
 
-| CLI | Potential Approach | Notes |
-|-----|-------------------|-------|
-| `claude` | `claude usage` or API headers | Check Anthropic CLI for usage commands |
-| `codex` | OpenAI usage API | May need API key for direct queries |
-| `gemini` | `gcloud` quota APIs | Google Cloud has quota management |
+| CLI | Potential Approach | Notes | Status |
+|-----|-------------------|-------|--------|
+| `claude` | `claude usage` or API headers | Check if Anthropic CLI exposes usage | Unverified |
+| `codex` | OpenAI usage API | May need API key (conflicts with CLI-first) | Unverified |
+| `gemini` | `gcloud` quota APIs | Project-level quotas, not API rate limits | Unverified |
 
-**Benefits of proactive rate limit awareness:**
+> **Note:** The approaches above are speculative and need investigation. As of writing, it's unclear whether these CLI tools expose proactive rate limit/usage queries. The reactive approach (detect limits on failure) is the reliable fallback.
+
+**Benefits of proactive rate limit awareness (if achievable):**
 - Show remaining quota before hitting limits
 - Smarter model selection (prefer models with headroom)
 - Warn users before exhausting quota
@@ -90,8 +165,9 @@ Each CLI tool may have different mechanisms for querying rate limit status proac
 
 **Implementation considerations:**
 - Cache results (don't query on every iteration)
-- Graceful fallback if query not supported
+- Graceful fallback if query not supported (use reactive detection)
 - Per-model strategy abstraction in engine
+- "Runs remaining" estimates are nice-to-have, not core
 
 ---
 
@@ -374,6 +450,19 @@ crates/ralf-tui/src/
 
 3. **File change detection:** How do we detect file changes for activity indicators? Watch filesystem or parse model output?
 
+4. **Model variant selection:** Each CLI tool supports multiple model variants with different capabilities and costs:
+   - Claude: Opus (complex reasoning), Sonnet (balanced), Haiku (fast/cheap)
+   - OpenAI: GPT-4o, GPT-4, etc.
+   - Gemini: Ultra, Pro, Flash
+
+   How should ralf handle variant selection?
+   - **Option A:** User configures per-phase preferences (Opus for review, Sonnet for coding, Haiku for verification)
+   - **Option B:** ralf auto-selects based on task complexity (needs heuristics)
+   - **Option C:** Defer to CLI defaults, let users configure their CLI tools directly
+   - **Option D:** Expose in Settings panel as simple preference per CLI tool
+
+   This affects cost, speed, and quality. Needs user research to understand preferences.
+
 ---
 
 ## Changelog
@@ -384,3 +473,6 @@ crates/ralf-tui/src/
 | 2025-01-08 | Added TUI_STYLE_GUIDE.md reference |
 | 2025-01-08 | Added HeartbeatRow default (enabled), resolved thread picker and recovery flow questions |
 | 2025-01-08 | Added CLI-First Model Architecture section documenting dependency on CLI tools and model management UI design |
+| 2025-01-08 | Expanded model architecture based on Gemini/Codex review: added error categorization, model selection strategy, offline mode, probe sequence details, enable/disable semantics, and marked rate limit APIs as needing investigation |
+| 2025-01-08 | Added CLI Version Management section for tracking tool updates and providing upgrade guidance |
+| 2025-01-08 | Added Open Question #4: Model variant selection (opus/sonnet/haiku etc.) |
