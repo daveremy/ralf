@@ -308,16 +308,49 @@ Wire up the shell to thread state for dynamic content.
 **Exit Criteria:** Status bar and footer update based on thread phase, context pane routes to appropriate view.
 
 #### M5-B.3: Core Context Views
-**Spec:** `SPEC-m5b3-core-views.md`
 
-Build the most frequently used context views.
+Build the most frequently used context views. Broken into subphases for incremental delivery:
+
+##### M5-B.3a: SpecEditor
+**Spec:** `SPEC-m5b3a-spec-editor.md`
+
+The entry point for all workflows - where users draft and refine specs.
 
 **Deliverables:**
-- **SpecEditor** - Chat input with spec preview (Drafting, Assessing, Finalized phases)
-- **RunOutput** - Streaming model output with criteria checklist (Running, Verifying phases)
-- **Summary** - What was done + next actions (Implemented phase)
+- Chat input widget (multiline, Enter to send, Shift+Enter for newline)
+- Message history display with user/AI attribution
+- Spec preview panel (extracted from AI responses)
+- Integration with engine's `invoke_chat` for AI assessment
+- Phase transitions: Drafting → Assessing → Finalized
+- Thread creation flow (new thread from TUI)
 
-**Exit Criteria:** Can draft a spec, see run output, and view summary after completion.
+**Exit Criteria:** Can create a thread, draft a spec via chat, see AI assessment, and reach Finalized phase ready to run.
+
+##### M5-B.3b: RunOutput
+**Spec:** `SPEC-m5b3b-run-output.md`
+
+Real-time visibility into autonomous runs.
+
+**Deliverables:**
+- Streaming model output display
+- Criteria checklist with live status updates
+- Iteration counter in status bar
+- Basic run controls (pause button)
+
+**Exit Criteria:** Can start a run and watch model output stream in real-time with criteria progress.
+
+##### M5-B.3c: Summary
+**Spec:** `SPEC-m5b3c-summary.md`
+
+Post-run summary of what was accomplished.
+
+**Deliverables:**
+- Files changed summary (added/modified/deleted counts)
+- Criteria pass/fail summary
+- Next action guidance (review diff, polish, commit)
+- Quick actions (view diff, start polish phase)
+
+**Exit Criteria:** After a successful run, see clear summary of changes and next steps.
 
 #### M5-B.4: Advanced Context Views
 **Spec:** `SPEC-m5b4-advanced-views.md`
@@ -368,14 +401,17 @@ Add the activity visibility features that make autonomous runs tangible. Polish 
 ## Dependencies
 
 ```
-M5-A (Shell)
+M5-A (Shell) ✓
   ├── M5-A.1 (Model Probing) ✓
   │
   ▼
 M5-B (Timeline & Context)
-  ├── M5-B.1 (Timeline Foundation)
-  ├── M5-B.2 (Phase Router & Dynamic Status)
+  ├── M5-B.1 (Timeline Foundation) ✓
+  ├── M5-B.2 (Phase Router & Dynamic Status) ✓
   ├── M5-B.3 (Core Context Views)
+  │   ├── M5-B.3a (SpecEditor) ← NEXT
+  │   ├── M5-B.3b (RunOutput)
+  │   └── M5-B.3c (Summary)
   └── M5-B.4 (Advanced Context Views)
   │
   ▼
@@ -385,9 +421,10 @@ M5-C (Activity & Polish)
 Each major phase builds on the previous. No parallel development between major phases.
 
 **Within M5-B**, subphases should be completed sequentially:
-- M5-B.1 → M5-B.2: Phase router needs timeline events to display
-- M5-B.2 → M5-B.3/B.4: Context views need router infrastructure
-- M5-B.3 and M5-B.4 could potentially overlap once router is ready
+- M5-B.1 → M5-B.2: Phase router needs timeline events to display ✓
+- M5-B.2 → M5-B.3: Context views need router infrastructure ✓
+- M5-B.3a → M5-B.3b → M5-B.3c: Each view builds on workflow progression
+- M5-B.3 and M5-B.4 could potentially overlap once core views are ready
 
 **Within M5-C**, activity features and polish features can be developed independently.
 
@@ -534,3 +571,4 @@ crates/ralf-tui/src/
 | 2025-01-08 | Added Open Question #4: Model variant selection (opus/sonnet/haiku etc.) |
 | 2026-01-08 | Broke M5-B into subphases: B.1 Timeline Foundation, B.2 Phase Router, B.3 Core Views, B.4 Advanced Views |
 | 2026-01-08 | Added Input Handling section: keyboard-first with mouse support, vi-style navigation |
+| 2026-01-09 | Broke M5-B.3 into subphases: B.3a SpecEditor, B.3b RunOutput, B.3c Summary. Marked B.1, B.2 complete. |
