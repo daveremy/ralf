@@ -70,7 +70,7 @@ ralf run --max-iterations 50
 
 - [Specification](SPEC.md)
 - [Roadmap](docs/ROADMAP.md)
-- [Developer Roadmap](docs/DEV_ROADMAP.md)
+- [State Machine](docs/state-machine.md)
 - [Model Configuration](docs/MODELS.md)
 - [Configuration Reference](docs/CONFIG.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)

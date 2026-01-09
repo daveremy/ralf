@@ -58,7 +58,7 @@ gemini --all_files -p "<prompt>"
 
 **Spec Review:**
 ```bash
-gemini -p "@SPEC-feature.md @docs/state-machine.md @docs/DEVELOPMENT_PLAN.md \
+gemini -p "@SPEC-feature.md @docs/state-machine.md @docs/ROADMAP.md \
 Review this spec for: 1) completeness 2) correctness 3) consistency with existing architecture 4) testability. \
 Provide PASSED or FAILED verdict with specific issues."
 ```
@@ -187,6 +187,4 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 
 ## Architecture
 
-See `docs/DEVELOPMENT_PLAN.md` for the overall architecture and roadmap.
-
-See `docs/state-machine.md` for the thread state machine design.
+See `docs/ROADMAP.md` for the project roadmap and `docs/state-machine.md` for the thread state machine design.
