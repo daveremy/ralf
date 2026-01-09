@@ -71,7 +71,7 @@ pub struct CommandInfo {
 | Command | Aliases | Keybinding | Description |
 |---------|---------|------------|-------------|
 | `/help` | `/?` | `F1` | Show available commands |
-| `/quit` | `/q` | `Escape` (when empty) | Exit ralf |
+| `/quit` | `/q`, `/exit` | `Escape` (when empty) | Exit ralf |
 | `/split` | `/1` | `Ctrl+1` | Split view mode |
 | `/focus` | `/2` | `Ctrl+2` | Focus conversation mode |
 | `/canvas` | `/3` | `Ctrl+3` | Focus canvas mode |
@@ -214,7 +214,7 @@ When `/help` is invoked (or `F1`), show a modal overlay:
 │                                                                 │
 │ Global:                                                         │
 │   /help, /?        Show this help                          [F1] │
-│   /quit, /q        Exit ralf                               [Esc]│
+│   /quit, /q, /exit Exit ralf                               [Esc]│
 │   /split, /1       Split view mode                      [Ctrl+1]│
 │   /focus, /2       Focus conversation                   [Ctrl+2]│
 │   /canvas, /3      Focus canvas                         [Ctrl+3]│
