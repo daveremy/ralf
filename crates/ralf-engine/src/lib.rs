@@ -27,7 +27,8 @@ pub use chat::{
 };
 pub use config::{Config, ConfigError, ModelConfig, ModelSelection, VerifierConfig};
 pub use discovery::{
-    discover_model, discover_models, probe_model, DiscoveryResult, ModelInfo, ProbeResult,
+    discover_model, discover_models, probe_model, probe_model_with_info, DiscoveryResult,
+    ModelInfo, ProbeResult,
 };
 pub use git::{GitError, GitSafety};
 pub use persistence::{PersistenceError, ThreadStore, ThreadSummary};

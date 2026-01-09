@@ -58,9 +58,10 @@ impl<'a> ModelsPanel<'a> {
     }
 
     /// Get the color for a model state.
-    fn state_color(&self, state: ModelState) -> ratatui::style::Color {
+    fn state_color(&self, state: &ModelState) -> ratatui::style::Color {
         match state {
             ModelState::Ready => self.theme.success,
+            ModelState::RateLimited(_) => self.theme.error,
             ModelState::Cooldown(_) => self.theme.warning,
             ModelState::Unavailable => self.theme.muted,
             ModelState::Probing => self.theme.info,
@@ -98,7 +99,7 @@ impl Widget for ModelsPanel<'_> {
 
         for model in self.models {
             let indicator = model.indicator(self.ascii_mode);
-            let color = self.state_color(model.state);
+            let color = self.state_color(&model.state);
 
             let mut spans = vec![
                 Span::raw("  "),
@@ -123,7 +124,7 @@ impl Widget for ModelsPanel<'_> {
 
             // Add version if available and there's room
             if let Some(ref version) = model.version {
-                if model.state == ModelState::Ready {
+                if matches!(model.state, ModelState::Ready) {
                     spans.push(Span::styled(
                         format!("  v{version}"),
                         Style::default().fg(self.theme.muted),
@@ -201,8 +202,13 @@ mod tests {
         let panel = ModelsPanel::new(&models, &theme);
 
         // Ready should use success color
-        assert_eq!(panel.state_color(ModelState::Ready), theme.success);
+        assert_eq!(panel.state_color(&ModelState::Ready), theme.success);
         // Unavailable should use muted color
-        assert_eq!(panel.state_color(ModelState::Unavailable), theme.muted);
+        assert_eq!(panel.state_color(&ModelState::Unavailable), theme.muted);
+        // RateLimited should use error color
+        assert_eq!(
+            panel.state_color(&ModelState::RateLimited(None)),
+            theme.error
+        );
     }
 }

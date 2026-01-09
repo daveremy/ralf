@@ -2,9 +2,9 @@
 source: crates/ralf-tui/src/lib.rs
 expression: result
 ---
-● Drafting │ "New Thread"
-┏ Context ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃Context view will appear here...                                              ┃
+● No Thread │ "Select a thread to start"
+┏ Models ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃                                                                              ┃
 ┃                                                                              ┃
 ┃                                                                              ┃
 ┃                                                                              ┃
@@ -25,4 +25,4 @@ expression: result
 ┃                                                                              ┃
 ┃                                                                              ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-[Tab] Focus │ [1/2/3] Modes │ [?] Help │ [q] Quit
+[n] New Thread │ [o] Open Thread │ [Tab] Focus │ [1/2/3] Modes │ [?] Help │ [q]

@@ -110,6 +110,12 @@ pub struct ProbeResult {
     /// Whether the model appears to require auth.
     pub needs_auth: bool,
 
+    /// Whether the model is rate limited.
+    pub rate_limited: bool,
+
+    /// When the rate limit resets (human-readable string if available).
+    pub rate_limit_reset: Option<String>,
+
     /// Any issues detected.
     pub issues: Vec<String>,
 
@@ -118,28 +124,42 @@ pub struct ProbeResult {
 }
 
 /// Probe a model with a simple test prompt.
+///
+/// This is a convenience function that discovers the model first.
+/// If you already have a `ModelInfo`, use [`probe_model_with_info`] instead
+/// to avoid redundant discovery.
 pub fn probe_model(name: &str, timeout: Duration) -> ProbeResult {
+    let info = discover_model(name);
+    probe_model_with_info(&info, timeout)
+}
+
+/// Probe a model with a simple test prompt, using pre-discovered model info.
+///
+/// This avoids redundant discovery when you already have the `ModelInfo`.
+pub fn probe_model_with_info(info: &ModelInfo, timeout: Duration) -> ProbeResult {
     let mut result = ProbeResult {
-        name: name.to_string(),
+        name: info.name.clone(),
         success: false,
         response_time_ms: None,
         needs_auth: false,
+        rate_limited: false,
+        rate_limit_reset: None,
         issues: Vec::new(),
         suggestions: Vec::new(),
     };
 
-    // First check if the model is discoverable
-    let info = discover_model(name);
     if !info.found {
-        result.issues.push(format!("{name} not found on PATH"));
+        result
+            .issues
+            .push(format!("{} not found on PATH", info.name));
         result
             .suggestions
-            .push(format!("Install {name} CLI and add to PATH"));
+            .push(format!("Install {} CLI and add to PATH", info.name));
         return result;
     }
 
     if !info.callable {
-        result.issues.extend(info.issues);
+        result.issues.extend(info.issues.clone());
         return result;
     }
 
@@ -147,7 +167,7 @@ pub fn probe_model(name: &str, timeout: Duration) -> ProbeResult {
     let start = std::time::Instant::now();
 
     // Use a simple echo-like prompt that should return quickly
-    let probe_result = run_probe_command(name, timeout);
+    let probe_result = run_probe_command(&info.name, timeout);
 
     match probe_result {
         Ok(output) => {
@@ -158,22 +178,62 @@ pub fn probe_model(name: &str, timeout: Duration) -> ProbeResult {
             if output.success {
                 result.success = true;
             } else {
-                // Check for auth-related issues
+                // Check for specific error conditions
                 let combined = format!("{}\n{}", output.stdout, output.stderr);
-                if combined.to_lowercase().contains("auth")
-                    || combined.to_lowercase().contains("login")
-                    || combined.to_lowercase().contains("credential")
-                    || combined.to_lowercase().contains("token")
+                let combined_lower = combined.to_lowercase();
+
+                // Extract actual error line for cleaner messages
+                let error_line = combined
+                    .lines()
+                    .find(|l| l.starts_with("ERROR:") || l.starts_with("error:"))
+                    .map_or("", |l| {
+                        l.trim_start_matches("ERROR:")
+                            .trim_start_matches("error:")
+                            .trim()
+                    });
+
+                if combined_lower.contains("limit")
+                    || combined_lower.contains("quota")
+                    || combined.contains("429")
                 {
+                    // Rate limit / usage limit reached
+                    result.rate_limited = true;
+                    result.issues.push("Rate limited".into());
+
+                    // Try to extract reset time from error (e.g., "try again at Jan 12th, 2026 9:08 PM")
+                    if let Some(reset_time) = extract_reset_time(&combined) {
+                        result.rate_limit_reset = Some(reset_time);
+                    } else {
+                        result
+                            .suggestions
+                            .push("Wait for limit to reset or upgrade plan".into());
+                    }
+                } else if is_auth_error(&combined_lower) {
+                    // Auth required
                     result.needs_auth = true;
                     result.issues.push("Model requires authentication".into());
-                    result
-                        .suggestions
-                        .push(format!("Run `{name} login` or configure credentials"));
+                    result.suggestions.push(format!(
+                        "Run `{} auth login` or configure credentials",
+                        info.name
+                    ));
                 } else {
-                    result
-                        .issues
-                        .push(format!("Probe failed: {}", output.stderr));
+                    // Generic failure - use error line if available
+                    let message = if error_line.is_empty() {
+                        // Truncate long stderr to first meaningful line
+                        output
+                            .stderr
+                            .lines()
+                            .find(|l| {
+                                !l.trim().is_empty()
+                                    && !l.contains("v0.")
+                                    && !l.contains("preview")
+                            })
+                            .unwrap_or(&output.stderr)
+                            .to_string()
+                    } else {
+                        error_line.to_string()
+                    };
+                    result.issues.push(format!("Probe failed: {message}"));
                 }
             }
         }
@@ -284,13 +344,16 @@ fn run_probe_command(name: &str, timeout: Duration) -> Result<ProbeOutput, std::
             }
 
             // Check if it looks like an auth issue
+            // Be careful not to false-positive on success messages like "Loaded cached credentials"
             let combined = format!("{stdout}\n{stderr}").to_lowercase();
-            if combined.contains("auth")
-                || combined.contains("login")
+            let needs_auth = (combined.contains("auth") && !combined.contains("loaded"))
+                || combined.contains("please login")
                 || combined.contains("sign in")
-                || combined.contains("credential")
-                || combined.contains("authenticate")
-            {
+                || combined.contains("not authenticated")
+                || combined.contains("authentication required")
+                || combined.contains("unauthorized");
+
+            if needs_auth {
                 // Return as a failed probe with auth info, not a timeout error
                 return Ok(ProbeOutput {
                     success: false,
@@ -306,6 +369,72 @@ fn run_probe_command(name: &str, timeout: Duration) -> Result<ProbeOutput, std::
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+/// Check if output indicates an auth error (not success messages like "Loaded cached credentials").
+fn is_auth_error(output: &str) -> bool {
+    // Positive patterns indicating auth is needed
+    let needs_auth_patterns = [
+        "not authenticated",
+        "authentication required",
+        "unauthorized",
+        "please login",
+        "please sign in",
+        "api key required",
+        "api_key required",
+        "missing api key",
+        "invalid api key",
+        "no credentials",
+    ];
+
+    // Check for explicit auth error patterns first
+    for pattern in needs_auth_patterns {
+        if output.contains(pattern) {
+            return true;
+        }
+    }
+
+    // Check for "auth" keyword but exclude success messages
+    if output.contains("auth") && !output.contains("loaded") && !output.contains("success") {
+        return true;
+    }
+
+    // Check for "login" but exclude "please run ... login" success context
+    if output.contains("login required") || output.contains("must login") {
+        return true;
+    }
+
+    false
+}
+
+/// Extract rate limit reset time from error message.
+///
+/// Looks for patterns like:
+/// - "try again at Jan 12th, 2026 9:08 PM"
+/// - "resets at 2026-01-12T21:08:00"
+fn extract_reset_time(output: &str) -> Option<String> {
+    // Look for "try again at <datetime>"
+    if let Some(idx) = output.find("try again at ") {
+        let rest = &output[idx + 13..];
+        // Take until end of line or period
+        let end = rest.find(['.', '\n']).unwrap_or(rest.len());
+        let time_str = rest[..end].trim();
+        if !time_str.is_empty() {
+            return Some(time_str.to_string());
+        }
+    }
+
+    // Look for "resets at <datetime>"
+    if let Some(idx) = output.find("resets at ") {
+        let rest = &output[idx + 10..];
+        let end = rest.find(['.', '\n', '"']).unwrap_or(rest.len());
+        let time_str = rest[..end].trim();
+        if !time_str.is_empty() {
+            return Some(time_str.to_string());
+        }
+    }
+
+    None
 }
 
 /// Extract version from command output.
@@ -360,6 +489,8 @@ mod tests {
             success: true,
             response_time_ms: Some(100),
             needs_auth: false,
+            rate_limited: false,
+            rate_limit_reset: None,
             issues: vec![],
             suggestions: vec![],
         };

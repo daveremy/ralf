@@ -495,6 +495,8 @@ impl App {
                 success: false,
                 response_time_ms: None,
                 needs_auth: false,
+                rate_limited: false,
+                rate_limit_reset: None,
                 issues: vec![error.to_string()],
                 suggestions: vec![],
             });

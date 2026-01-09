@@ -11,7 +11,7 @@ mod models_panel;
 mod pane;
 mod status_bar;
 
-pub use footer_hints::{FooterHints, KeyHint};
+pub use footer_hints::{hints_for_state, FooterHints, KeyHint};
 pub use models_panel::ModelsPanel;
 pub use pane::Pane;
 pub use status_bar::{StatusBar, StatusBarContent};

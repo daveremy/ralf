@@ -24,11 +24,12 @@ use ratatui::{backend::Backend, Terminal};
 use crate::layout::{render_shell, FocusedPane, ScreenMode, MIN_HEIGHT, MIN_WIDTH};
 use crate::models::ModelStatus;
 use crate::theme::{BorderSet, IconMode, IconSet, Theme};
+use crate::thread_state::ThreadDisplay;
 use crate::timeline::{
     EventKind, ReviewEvent, ReviewResult, RunEvent, SpecEvent, SystemEvent, TimelineState,
     SCROLL_SPEED,
 };
-use ralf_engine::discovery::{discover_models, probe_model, KNOWN_MODELS};
+use ralf_engine::discovery::{discover_models, probe_model_with_info, KNOWN_MODELS};
 
 /// Maximum time between clicks to count as double-click.
 const DOUBLE_CLICK_THRESHOLD: Duration = Duration::from_millis(500);
@@ -124,6 +125,8 @@ pub struct ShellApp {
     last_click: Option<LastClick>,
     /// Current toast notification (if any).
     pub toast: Option<Toast>,
+    /// Current thread display state (None = no thread loaded).
+    pub current_thread: Option<ThreadDisplay>,
 }
 
 impl Default for ShellApp {
@@ -165,7 +168,14 @@ impl ShellApp {
             timeline_bounds: TimelinePaneBounds::default(),
             last_click: None,
             toast: None,
+            current_thread: None, // No thread loaded initially
         }
+    }
+
+    /// Set the current thread, updating models panel visibility.
+    pub fn set_thread(&mut self, thread: Option<ThreadDisplay>) {
+        self.current_thread = thread;
+        self.show_models_panel = self.current_thread.is_none();
     }
 
     /// Show a toast notification.
@@ -490,13 +500,12 @@ fn probe_models_parallel(timeout: Duration) -> mpsc::Receiver<ModelStatus> {
 
     for info in discovery.models {
         let tx = tx.clone();
-        let name = info.name.clone();
         let info_clone = info.clone();
 
         thread::spawn(move || {
             // Only probe if the model was found
             let status = if info_clone.found {
-                let probe = probe_model(&name, timeout);
+                let probe = probe_model_with_info(&info_clone, timeout);
                 ModelStatus::from_engine(&info_clone, Some(&probe))
             } else {
                 ModelStatus::from_engine(&info_clone, None)
@@ -562,6 +571,7 @@ pub fn run_shell<B: Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
                     &app.timeline,
                     &mut app.timeline_bounds,
                     app.toast.as_ref(),
+                    app.current_thread.as_ref(),
                 );
             })?;
 

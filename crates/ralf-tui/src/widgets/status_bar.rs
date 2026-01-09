@@ -12,8 +12,11 @@ use ratatui::{
     widgets::{Paragraph, Widget},
 };
 
+use ralf_engine::thread::PhaseKind;
+
 use crate::models::{ModelState, ModelStatus, ModelsSummary};
 use crate::theme::Theme;
+use crate::thread_state::ThreadDisplay;
 
 /// Width threshold below which model indicators collapse to summary format.
 const NARROW_THRESHOLD: u16 = 60;
@@ -29,7 +32,7 @@ pub struct StatusBarContent {
     pub file: Option<String>,
     /// Progress metric (e.g., "2/5 criteria").
     pub metric: Option<String>,
-    /// Next action hint (e.g., "→ Press Enter to send").
+    /// Next action hint (plain text, widget prepends "→ ").
     pub hint: Option<String>,
 }
 
@@ -66,6 +69,55 @@ impl StatusBarContent {
             hint: None,
         }
     }
+
+    /// Create status bar content from thread display state.
+    pub fn from_thread(thread: Option<&ThreadDisplay>) -> Self {
+        match thread {
+            None => Self {
+                phase: "No Thread".into(),
+                title: "Select a thread to start".into(),
+                file: None,
+                metric: None,
+                hint: None,
+            },
+            Some(t) => {
+                let metric = t.iteration.map(|i| format!("{}/{}", i, t.max_iterations));
+                let hint = Some(Self::next_action_hint(t.phase_kind));
+                Self {
+                    phase: t.phase_display.clone(),
+                    title: t.title.clone(),
+                    file: None,
+                    metric,
+                    hint,
+                }
+            }
+        }
+    }
+
+    /// Get next action hint for a phase.
+    #[must_use]
+    pub fn next_action_hint(phase: PhaseKind) -> String {
+        match phase {
+            PhaseKind::Drafting => "Describe your task",
+            PhaseKind::Assessing => "Review AI feedback",
+            PhaseKind::Finalized => "Press [r] to run",
+            PhaseKind::Preflight => "Checking prerequisites...",
+            PhaseKind::PreflightFailed => "Fix issues to continue",
+            PhaseKind::Configuring => "Configure and start",
+            PhaseKind::Running => "Loop in progress...",
+            PhaseKind::Verifying => "Checking criteria...",
+            PhaseKind::Paused => "Resume or reconfigure",
+            PhaseKind::Stuck => "Choose next action",
+            PhaseKind::Implemented => "Review changes",
+            PhaseKind::Polishing => "Add docs/tests",
+            PhaseKind::PendingReview => "Review the diff",
+            PhaseKind::Approved => "Ready to commit",
+            PhaseKind::ReadyToCommit => "Commit when ready",
+            PhaseKind::Done => "Complete!",
+            PhaseKind::Abandoned => "Thread abandoned",
+        }
+        .into()
+    }
 }
 
 /// Status bar widget.
@@ -95,9 +147,10 @@ impl<'a> StatusBar<'a> {
     }
 
     /// Get the color for a model state.
-    fn state_color(&self, state: ModelState) -> ratatui::style::Color {
+    fn state_color(&self, state: &ModelState) -> ratatui::style::Color {
         match state {
             ModelState::Ready => self.theme.success,
+            ModelState::RateLimited(_) => self.theme.error,
             ModelState::Cooldown(_) => self.theme.warning,
             ModelState::Unavailable => self.theme.muted,
             ModelState::Probing => self.theme.info,
@@ -140,7 +193,7 @@ impl Widget for StatusBar<'_> {
                     ));
                     spans.push(Span::raw(" "));
                     let indicator = model.indicator(self.ascii_mode);
-                    let color = self.state_color(model.state);
+                    let color = self.state_color(&model.state);
                     spans.push(Span::styled(indicator, Style::default().fg(color)));
                 }
             }
@@ -216,8 +269,61 @@ mod tests {
         let bar = StatusBar::new(&content, &models, &theme);
 
         // Ready should use success color
-        assert_eq!(bar.state_color(ModelState::Ready), theme.success);
+        assert_eq!(bar.state_color(&ModelState::Ready), theme.success);
         // Unavailable should use muted color
-        assert_eq!(bar.state_color(ModelState::Unavailable), theme.muted);
+        assert_eq!(bar.state_color(&ModelState::Unavailable), theme.muted);
+        // RateLimited should use error color
+        assert_eq!(
+            bar.state_color(&ModelState::RateLimited(None)),
+            theme.error
+        );
+    }
+
+    #[test]
+    fn test_from_thread_none() {
+        let content = StatusBarContent::from_thread(None);
+        assert_eq!(content.phase, "No Thread");
+        assert!(content.title.contains("Select"));
+        assert!(content.hint.is_none());
+    }
+
+    #[test]
+    fn test_from_thread_running() {
+        let display = ThreadDisplay {
+            id: "test-001".into(),
+            title: "Test Feature".into(),
+            phase_kind: PhaseKind::Running,
+            phase_display: "Running".into(),
+            iteration: Some(2),
+            max_iterations: 5,
+            failure_reason: None,
+        };
+
+        let content = StatusBarContent::from_thread(Some(&display));
+        assert_eq!(content.phase, "Running");
+        assert_eq!(content.title, "Test Feature");
+        assert_eq!(content.metric, Some("2/5".into()));
+        assert!(content.hint.is_some());
+    }
+
+    #[test]
+    fn test_next_action_hint_all_phases() {
+        // Test a few key phases
+        assert_eq!(
+            StatusBarContent::next_action_hint(PhaseKind::Drafting),
+            "Describe your task"
+        );
+        assert_eq!(
+            StatusBarContent::next_action_hint(PhaseKind::Running),
+            "Loop in progress..."
+        );
+        assert_eq!(
+            StatusBarContent::next_action_hint(PhaseKind::Done),
+            "Complete!"
+        );
+        assert_eq!(
+            StatusBarContent::next_action_hint(PhaseKind::Abandoned),
+            "Thread abandoned"
+        );
     }
 }

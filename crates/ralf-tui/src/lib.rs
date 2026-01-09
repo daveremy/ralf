@@ -15,6 +15,7 @@
 //! - [`shell`] - Main app and run function
 
 mod app;
+pub mod context;
 mod event;
 pub mod headless;
 pub mod layout;
@@ -24,6 +25,7 @@ pub mod shell;
 #[cfg(test)]
 pub mod test_utils;
 pub mod theme;
+pub mod thread_state;
 pub mod timeline;
 mod ui;
 pub mod widgets;
@@ -35,10 +37,12 @@ pub use event::{Action, Event, EventHandler};
 pub use ralf_engine;
 
 // Re-export M5-A shell components
+pub use context::{CompletionKind, ContextView};
 pub use layout::{FocusedPane, ScreenMode};
 pub use models::{ModelState, ModelStatus, ModelsSummary};
 pub use shell::{run_shell, ShellApp, UiConfig};
 pub use theme::{BorderSet, IconMode, IconSet, Theme};
+pub use thread_state::ThreadDisplay;
 pub use timeline::{
     EventKind, ReviewEvent, ReviewResult, RunEvent, SpecEvent, SystemEvent, SystemLevel,
     TimelineEvent, TimelineState, TimelineWidget,
@@ -570,6 +574,7 @@ mod snapshot_tests {
                     &timeline_state,
                     &mut timeline_bounds,
                     None, // toast
+                    None, // thread (no thread loaded)
                 );
             })
             .expect("Failed to draw");
