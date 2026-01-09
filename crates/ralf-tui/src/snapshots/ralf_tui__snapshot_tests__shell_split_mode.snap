@@ -2,7 +2,7 @@
 source: crates/ralf-tui/src/lib.rs
 expression: result
 ---
-● Drafting │ "New Thread" │ claude
+● Drafting │ "New Thread"
 ┏ Timeline ━━━━━━━━━━━━━━━━━━━━┓╭ Context ─────────────────────────────────────╮
 ┃Timeline events will appear he┃│Context view will appear here...              │
 ┃                              ┃│                                              │

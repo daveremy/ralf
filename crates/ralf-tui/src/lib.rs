@@ -18,6 +18,7 @@ mod app;
 mod event;
 pub mod headless;
 pub mod layout;
+pub mod models;
 mod screens;
 pub mod shell;
 #[cfg(test)]
@@ -34,6 +35,7 @@ pub use ralf_engine;
 
 // Re-export M5-A shell components
 pub use layout::{FocusedPane, ScreenMode};
+pub use models::{ModelState, ModelStatus, ModelsSummary};
 pub use shell::{run_shell, ShellApp, UiConfig};
 pub use theme::{BorderSet, IconMode, IconSet, Theme};
 
@@ -542,13 +544,23 @@ mod snapshot_tests {
 
         let theme = theme::Theme::default();
         let borders = theme::BorderSet::new(theme::IconMode::Unicode);
+        let models: Vec<models::ModelStatus> = vec![];
 
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).expect("Failed to create terminal");
 
         terminal
             .draw(|frame| {
-                layout::render_shell(frame, screen_mode, focused_pane, &theme, &borders);
+                layout::render_shell(
+                    frame,
+                    screen_mode,
+                    focused_pane,
+                    &theme,
+                    &borders,
+                    &models,
+                    false,       // ascii_mode
+                    false,       // show_models_panel
+                );
             })
             .expect("Failed to draw");
 
