@@ -276,26 +276,59 @@ Build the application skeleton with all regions, layout management, focus handli
 
 Connect the shell to real thread data. Build the timeline event system and all phase-specific context views.
 
-**Spec:** `SPEC-m5b-timeline-context.md`
+This phase is broken into subphases for incremental delivery:
+
+#### M5-B.1: Timeline Foundation
+**Spec:** `SPEC-m5b1-timeline-foundation.md`
+
+Build the timeline event system that forms the backbone of the TUI.
 
 **Deliverables:**
+- `TimelineEvent` data model (4 types: Spec, Run, Review, System)
+- Timeline pane with scrolling and keyboard navigation (j/k, Up/Down)
+- Event rendering with timestamps, badges, and model attribution
+- Selection highlighting
+- Basic collapsible events (▸/▾ with Enter)
 
-*Timeline:*
-- Event data model (4 types)
-- Event rendering with badges + attribution
-- Scrolling, selection, keyboard nav
-- Collapsible events (▸/▾)
-- Filtering by type
+**Exit Criteria:** Timeline pane shows events, can scroll and select, events display with proper formatting.
 
-*Context Views:*
-- Phase router component
-- All 8 context views (see table above)
-- View-specific keyboard handling
+#### M5-B.2: Phase Router & Dynamic Status
+**Spec:** `SPEC-m5b2-phase-router.md`
 
-*Dynamic Content:*
-- Status bar driven by thread state
-- Footer hints per phase
-- "Next action" guidance
+Wire up the shell to thread state for dynamic content.
+
+**Deliverables:**
+- Phase router component (ThreadPhase → Context View)
+- Status bar driven by thread state (phase, title, current model)
+- Footer hints that change per phase
+- "Next action" guidance in status bar
+
+**Exit Criteria:** Status bar and footer update based on thread phase, context pane routes to appropriate view.
+
+#### M5-B.3: Core Context Views
+**Spec:** `SPEC-m5b3-core-views.md`
+
+Build the most frequently used context views.
+
+**Deliverables:**
+- **SpecEditor** - Chat input with spec preview (Drafting, Assessing, Finalized phases)
+- **RunOutput** - Streaming model output with criteria checklist (Running, Verifying phases)
+- **Summary** - What was done + next actions (Implemented phase)
+
+**Exit Criteria:** Can draft a spec, see run output, and view summary after completion.
+
+#### M5-B.4: Advanced Context Views
+**Spec:** `SPEC-m5b4-advanced-views.md`
+
+Build remaining context views for full workflow support.
+
+**Deliverables:**
+- **PreflightResults** - Check list with pass/fail + actions (Preflight, PreflightFailed)
+- **RunConfig** - Model selection, iteration limit, verifiers (Configuring)
+- **DecisionPrompt** - Options with numbered keys (Paused, Stuck)
+- **DiffViewer** - File-by-file diff with navigation (PendingReview, Approved)
+- **CommitView** - Commit message editor + summary (ReadyToCommit, Done)
+- Timeline filtering by event type
 
 **Exit Criteria:** Can walk through entire workflow (Draft → Run → Review → Commit) with appropriate views at each phase.
 
@@ -334,19 +367,27 @@ Add the activity visibility features that make autonomous runs tangible. Polish 
 
 ```
 M5-A (Shell)
+  ├── M5-A.1 (Model Probing) ✓
   │
   ▼
 M5-B (Timeline & Context)
+  ├── M5-B.1 (Timeline Foundation)
+  ├── M5-B.2 (Phase Router & Dynamic Status)
+  ├── M5-B.3 (Core Context Views)
+  └── M5-B.4 (Advanced Context Views)
   │
   ▼
 M5-C (Activity & Polish)
 ```
 
-Each phase builds on the previous. No parallel development between phases.
+Each major phase builds on the previous. No parallel development between major phases.
 
-Within phases, some components can be developed in parallel:
-- M5-B: Timeline and Context views can be developed independently
-- M5-C: Activity features and polish features can be developed independently
+**Within M5-B**, subphases should be completed sequentially:
+- M5-B.1 → M5-B.2: Phase router needs timeline events to display
+- M5-B.2 → M5-B.3/B.4: Context views need router infrastructure
+- M5-B.3 and M5-B.4 could potentially overlap once router is ready
+
+**Within M5-C**, activity features and polish features can be developed independently.
 
 ---
 
@@ -360,6 +401,15 @@ Within phases, some components can be developed in parallel:
 - Single `App` struct owns all UI state
 - Thread data accessed via `ThreadStore` (read) and engine APIs (write)
 - Event loop pattern from existing code
+
+### Input Handling
+- **Keyboard-first** - All functionality accessible via keyboard
+- **Mouse support** - Enabled when terminal supports it (crossterm handles detection)
+  - Scroll wheel for scrolling panes
+  - Click to select items
+  - Double-click for toggle actions (collapse/expand)
+  - Graceful degradation when mouse unavailable
+- **Vi-style navigation** - j/k for up/down, g/G for jump to start/end
 
 ### Testing Strategy
 - **Headless mode** for automated testing (render to buffer, assert content)
@@ -476,3 +526,5 @@ crates/ralf-tui/src/
 | 2025-01-08 | Expanded model architecture based on Gemini/Codex review: added error categorization, model selection strategy, offline mode, probe sequence details, enable/disable semantics, and marked rate limit APIs as needing investigation |
 | 2025-01-08 | Added CLI Version Management section for tracking tool updates and providing upgrade guidance |
 | 2025-01-08 | Added Open Question #4: Model variant selection (opus/sonnet/haiku etc.) |
+| 2026-01-08 | Broke M5-B into subphases: B.1 Timeline Foundation, B.2 Phase Router, B.3 Core Views, B.4 Advanced Views |
+| 2026-01-08 | Added Input Handling section: keyboard-first with mouse support, vi-style navigation |
