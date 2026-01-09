@@ -17,6 +17,8 @@ pub struct TimelineWidget<'a> {
     state: &'a TimelineState,
     theme: &'a Theme,
     focused: bool,
+    /// Whether to render with a border (default: true).
+    with_border: bool,
 }
 
 impl<'a> TimelineWidget<'a> {
@@ -26,6 +28,7 @@ impl<'a> TimelineWidget<'a> {
             state,
             theme,
             focused: false,
+            with_border: true,
         }
     }
 
@@ -33,6 +36,16 @@ impl<'a> TimelineWidget<'a> {
     #[must_use]
     pub fn focused(mut self, focused: bool) -> Self {
         self.focused = focused;
+        self
+    }
+
+    /// Set whether to render with a border.
+    ///
+    /// When false, renders just the timeline content without a surrounding border.
+    /// Useful when embedding in a composite widget like `ConversationPane`.
+    #[must_use]
+    pub fn with_border(mut self, border: bool) -> Self {
+        self.with_border = border;
         self
     }
 
@@ -188,22 +201,29 @@ impl<'a> TimelineWidget<'a> {
 
 impl Widget for TimelineWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        // Render border
-        let border_style = if self.focused {
-            Style::default().fg(self.theme.border_focused)
+        // Determine inner area based on border setting
+        let inner = if self.with_border {
+            // Render border
+            let border_style = if self.focused {
+                Style::default().fg(self.theme.border_focused)
+            } else {
+                Style::default().fg(self.theme.border)
+            };
+
+            let block = Block::default()
+                .title(" Timeline ")
+                .title_style(Style::default().fg(self.theme.text))
+                .borders(Borders::ALL)
+                .border_style(border_style)
+                .style(Style::default().bg(self.theme.base));
+
+            let inner = block.inner(area);
+            block.render(area, buf);
+            inner
         } else {
-            Style::default().fg(self.theme.border)
+            // No border - use full area
+            area
         };
-
-        let block = Block::default()
-            .title(" Timeline ")
-            .title_style(Style::default().fg(self.theme.text))
-            .borders(Borders::ALL)
-            .border_style(border_style)
-            .style(Style::default().bg(self.theme.base));
-
-        let inner = block.inner(area);
-        block.render(area, buf);
 
         if inner.height == 0 {
             return;

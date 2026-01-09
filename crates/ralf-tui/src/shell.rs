@@ -29,6 +29,7 @@ use crate::timeline::{
     EventKind, ReviewEvent, ReviewResult, RunEvent, SpecEvent, SystemEvent, TimelineState,
     SCROLL_SPEED,
 };
+use crate::ui::widgets::TextInputState;
 use ralf_engine::discovery::{discover_models, probe_model_with_info, KNOWN_MODELS};
 
 /// Maximum time between clicks to count as double-click.
@@ -127,6 +128,8 @@ pub struct ShellApp {
     pub toast: Option<Toast>,
     /// Current thread display state (None = no thread loaded).
     pub current_thread: Option<ThreadDisplay>,
+    /// Text input state for the conversation pane.
+    pub input: TextInputState,
 }
 
 impl Default for ShellApp {
@@ -169,6 +172,7 @@ impl ShellApp {
             last_click: None,
             toast: None,
             current_thread: None, // No thread loaded initially
+            input: TextInputState::new(),
         }
     }
 
@@ -276,30 +280,151 @@ impl ShellApp {
         }
     }
 
+    /// Handle key event for conversation input.
+    ///
+    /// Returns `true` if the key was handled by the input, `false` otherwise.
+    ///
+    /// Key handling strategy:
+    /// - When input has text: ALL character keys go to input (typing takes precedence)
+    /// - When input is empty: reserved keys pass through for global actions
+    ///   (1/2/3 = screen modes, q = quit, r = refresh, j/k/g/G/y = timeline nav)
+    fn handle_conversation_key(&mut self, key: KeyEvent) -> bool {
+        // Check if input is empty - determines whether reserved keys pass through
+        let input_empty = self.input.is_empty();
+
+        match key.code {
+            // Text input - characters without ctrl modifier
+            // When input is empty, allow reserved keys to pass through for global actions
+            // When input has text, capture ALL characters for uninterrupted typing
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Reserved keys only pass through when input is empty
+                if input_empty
+                    && matches!(c, '1' | '2' | '3' | 'q' | 'r' | 'j' | 'k' | 'g' | 'G' | 'y')
+                {
+                    return false;
+                }
+                self.input.insert(c);
+                true
+            }
+
+            // Shift+Enter inserts newline
+            KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.input.insert('\n');
+                true
+            }
+
+            // Enter submits input
+            KeyCode::Enter => {
+                self.submit_input();
+                true
+            }
+
+            // Backspace
+            KeyCode::Backspace => {
+                self.input.backspace();
+                true
+            }
+
+            // Delete
+            KeyCode::Delete => {
+                self.input.delete();
+                true
+            }
+
+            // Cursor movement
+            KeyCode::Left => {
+                self.input.move_left();
+                true
+            }
+            KeyCode::Right => {
+                self.input.move_right();
+                true
+            }
+            KeyCode::Home => {
+                self.input.move_home();
+                true
+            }
+            KeyCode::End => {
+                self.input.move_end();
+                true
+            }
+
+            // Up - history navigation when at start of input
+            KeyCode::Up => {
+                if self.input.cursor == 0 || self.input.is_empty() {
+                    self.input.history_prev();
+                    true
+                } else {
+                    false // Let timeline scroll handle it
+                }
+            }
+
+            // Down - history navigation when at end of input
+            KeyCode::Down => {
+                if self.input.cursor == self.input.content.len() {
+                    self.input.history_next();
+                    true
+                } else {
+                    false // Let timeline scroll handle it
+                }
+            }
+
+            // Esc clears input if non-empty
+            KeyCode::Esc if !self.input.is_empty() => {
+                self.input.clear();
+                true
+            }
+
+            // Not handled by input
+            _ => false,
+        }
+    }
+
+    /// Submit the current input.
+    ///
+    /// For now, just adds a system event to show it worked.
+    /// Chat integration (M5-B.3b) will replace this.
+    fn submit_input(&mut self) {
+        let content = self.input.submit();
+        if content.trim().is_empty() {
+            return;
+        }
+        // Placeholder: add a system event to show input was received
+        self.timeline.push(EventKind::System(SystemEvent::info(
+            format!("[Input received: {} chars]", content.len()),
+        )));
+    }
+
     /// Handle keyboard input.
     pub fn handle_key_event(&mut self, key: KeyEvent) -> Option<ShellAction> {
-        // Timeline-specific keys when timeline is focused
+        // Conversation pane keys (timeline + input) when focused
         if self.timeline_focused() {
+            // Try conversation input handling first
+            if self.handle_conversation_key(key) {
+                return None;
+            }
+
+            // Timeline navigation and actions (when input didn't handle the key)
             let visible_count = self
                 .timeline
                 .events_per_page(self.timeline_bounds.inner_height as usize);
             match key.code {
-                // Navigation
-                KeyCode::Char('j') | KeyCode::Down => {
+                // Navigation (j/k for vim users, Page keys for all)
+                KeyCode::Char('j') => {
                     self.timeline.select_next();
                     self.timeline.ensure_selection_visible(visible_count);
                     return None;
                 }
-                KeyCode::Char('k') | KeyCode::Up => {
+                KeyCode::Char('k') => {
                     self.timeline.select_prev();
                     self.timeline.ensure_selection_visible(visible_count);
                     return None;
                 }
-                KeyCode::Char('g') | KeyCode::Home => {
+                KeyCode::Char('g') => {
                     self.timeline.jump_to_start();
                     return None;
                 }
-                KeyCode::Char('G') | KeyCode::End => {
+                KeyCode::Char('G') => {
                     self.timeline.jump_to_end();
                     return None;
                 }
@@ -311,11 +436,6 @@ impl ShellApp {
                 KeyCode::PageDown => {
                     self.timeline.page_down(visible_count);
                     self.timeline.ensure_selection_visible(visible_count);
-                    return None;
-                }
-                // Toggle collapse
-                KeyCode::Enter => {
-                    self.timeline.toggle_collapse();
                     return None;
                 }
                 // Copy selected event to clipboard (vim-style yank)
@@ -569,6 +689,7 @@ pub fn run_shell<B: Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
                     app.is_ascii_mode(),
                     app.show_models_panel,
                     &app.timeline,
+                    &app.input,
                     &mut app.timeline_bounds,
                     app.toast.as_ref(),
                     app.current_thread.as_ref(),
@@ -795,5 +916,60 @@ mod tests {
         // Unicode mode should return false
         app.ui_config.icons = IconMode::Unicode;
         assert!(!app.is_ascii_mode());
+    }
+
+    #[test]
+    fn test_conversation_input_empty_allows_reserved_keys() {
+        let mut app = ShellApp::new();
+        // Ensure input is empty and timeline is focused
+        assert!(app.input.is_empty());
+        app.focused_pane = FocusedPane::Timeline;
+
+        // 'q' should quit when input is empty
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn test_conversation_input_with_text_captures_reserved_keys() {
+        let mut app = ShellApp::new();
+        app.focused_pane = FocusedPane::Timeline;
+
+        // Type some text first
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
+        assert_eq!(app.input.content(), "hello");
+        assert!(!app.input.is_empty());
+
+        // Now 'q' should be typed, not quit
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+        assert!(!app.should_quit);
+        assert_eq!(app.input.content(), "helloq");
+
+        // Can type all reserved keys
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+        assert_eq!(app.input.content(), "helloquery");
+    }
+
+    #[test]
+    fn test_conversation_input_backspace_to_empty_restores_global_keys() {
+        let mut app = ShellApp::new();
+        app.focused_pane = FocusedPane::Timeline;
+
+        // Type 'a' then backspace
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        assert_eq!(app.input.content(), "a");
+        app.handle_key_event(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE));
+        assert!(app.input.is_empty());
+
+        // Now 'q' should quit again
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+        assert!(app.should_quit);
     }
 }

@@ -16,6 +16,7 @@
 
 mod app;
 pub mod context;
+pub mod conversation;
 mod event;
 pub mod headless;
 pub mod layout;
@@ -38,6 +39,7 @@ pub use ralf_engine;
 
 // Re-export M5-A shell components
 pub use context::{CompletionKind, ContextView};
+pub use conversation::{input_placeholder, ConversationPane};
 pub use layout::{FocusedPane, ScreenMode};
 pub use models::{ModelState, ModelStatus, ModelsSummary};
 pub use shell::{run_shell, ShellApp, UiConfig};
@@ -47,6 +49,7 @@ pub use timeline::{
     EventKind, ReviewEvent, ReviewResult, RunEvent, SpecEvent, SystemEvent, SystemLevel,
     TimelineEvent, TimelineState, TimelineWidget,
 };
+pub use ui::widgets::TextInputState;
 
 use crossterm::{
     cursor::Show as ShowCursor,
@@ -555,6 +558,7 @@ mod snapshot_tests {
         let borders = theme::BorderSet::new(theme::IconMode::Unicode);
         let models: Vec<models::ModelStatus> = vec![];
         let timeline_state = timeline::TimelineState::new();
+        let input_state = ui::widgets::TextInputState::new();
         let mut timeline_bounds = shell::TimelinePaneBounds::default();
 
         let backend = TestBackend::new(width, height);
@@ -572,6 +576,7 @@ mod snapshot_tests {
                     false, // ascii_mode
                     false, // show_models_panel
                     &timeline_state,
+                    &input_state,
                     &mut timeline_bounds,
                     None, // toast
                     None, // thread (no thread loaded)
