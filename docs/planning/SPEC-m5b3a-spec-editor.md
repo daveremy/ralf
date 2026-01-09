@@ -278,12 +278,56 @@ Update `hints_for_state` (from M5-B.2) to show chat-specific hints:
 | Assessing | Yes | `[Enter] Send` `[Ctrl+F] Finalize` `[?] Help` |
 | Finalized | Yes | `[r] Run` `[e] Edit` `[?] Help` |
 
+### 9. Basic Markdown Rendering
+
+**File:** `crates/ralf-tui/src/widgets/markdown.rs`
+
+AI responses are markdown. Render basic elements for readability:
+
+| Element | Rendering |
+|---------|-----------|
+| `# Header` | Bold + primary color |
+| `## Header` | Bold + secondary color |
+| `### Header` | Bold |
+| `**bold**` | Bold style |
+| `*italic*` | Italic style (or dim) |
+| `` `code` `` | Surface background color |
+| ```` ``` ```` code blocks | Surface background, monospace |
+| `- list item` | Proper indentation with bullet |
+| `1. numbered` | Proper indentation with number |
+| `> quote` | Muted color, indented |
+| `[text](url)` | Underlined, show text only |
+| `- [ ] checkbox` | Render as `☐` or `[ ]` |
+| `- [x] checkbox` | Render as `☑` or `[x]` |
+
+**Implementation approach:**
+
+Use `pulldown-cmark` for parsing (already handles edge cases), then convert events to styled `ratatui::text::Line` spans:
+
+```rust
+use pulldown_cmark::{Parser, Event, Tag};
+use ratatui::text::{Line, Span};
+
+pub struct MarkdownRenderer<'a> {
+    theme: &'a Theme,
+}
+
+impl<'a> MarkdownRenderer<'a> {
+    pub fn new(theme: &'a Theme) -> Self;
+
+    /// Render markdown text to styled lines.
+    pub fn render(&self, markdown: &str) -> Vec<Line<'static>>;
+}
+```
+
+**Fallback:** If `pulldown-cmark` adds too much complexity, implement a simple line-by-line regex-based renderer for the most common patterns (headers, bold, code blocks, lists).
+
 ## Non-Goals
 
 - **Thread picker (Ctrl+T)**: Future milestone - for now, only one thread at a time
 - **Model selection in chat**: Use default/available model for now
 - **Streaming responses**: Show loading state, then full response (streaming is M5-C)
-- **Rich markdown rendering**: Plain text with basic formatting for now
+- **Full markdown rendering**: Complex elements like tables, images, HTML. Basic elements supported (see Deliverable 9).
 - **Spec validation**: Beyond promise tag detection
 - **Offline mode**: Requires available model to chat
 - **Manual spec editing**: Direct editing of the generated spec (without AI). Users refine specs through chat. If manual editing is needed, add in polish phase.
@@ -320,11 +364,23 @@ Update `hints_for_state` (from M5-B.2) to show chat-specific hints:
 - [ ] AI timeout: Show timeout error, allow retry
 - [ ] Rate limited: Show rate limit message
 
+### Markdown Rendering
+- [ ] Headers (`#`, `##`, `###`) render with appropriate styling
+- [ ] Bold and italic text render with correct styles
+- [ ] Inline code renders with background color
+- [ ] Code blocks render with background color and preserve formatting
+- [ ] Lists (bulleted and numbered) render with proper indentation
+- [ ] Checkboxes render as `☐`/`☑` or `[ ]`/`[x]`
+- [ ] Blockquotes render indented and muted
+- [ ] Links show text without raw URL clutter
+
 ### Tests
 - [ ] Unit tests for `ChatState` transitions
 - [ ] Unit tests for spec preview extraction
 - [ ] Unit tests for phase determination
+- [ ] Unit tests for `MarkdownRenderer` (headers, code, lists)
 - [ ] Snapshot test for SpecEditor layout
+- [ ] Snapshot test for markdown rendering
 - [ ] Integration test for send/receive flow (mocked)
 
 ## Technical Notes
@@ -404,6 +460,7 @@ Threads are saved to `.ralf/threads/{id}.jsonl` using the engine's `Thread::save
 - M5-B.2 (Phase Router) - for `ContextView::SpecEditor` routing
 - Engine chat module - `invoke_chat`, `Thread`, `ChatContext`
 - Existing `TextInputState` - input handling
+- `pulldown-cmark` crate - markdown parsing (add to ralf-tui Cargo.toml)
 
 ## Risks
 
