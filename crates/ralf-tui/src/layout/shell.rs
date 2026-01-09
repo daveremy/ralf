@@ -19,11 +19,13 @@ use ratatui::{
 
 use super::screen_modes::{FocusedPane, ScreenMode};
 use crate::{
+    context::ContextView,
     models::ModelStatus,
     shell::{TimelinePaneBounds, Toast},
     theme::{BorderSet, Theme},
+    thread_state::ThreadDisplay,
     timeline::{TimelineState, TimelineWidget},
-    widgets::{FooterHints, KeyHint, ModelsPanel, Pane, StatusBar, StatusBarContent},
+    widgets::{hints_for_state, FooterHints, ModelsPanel, Pane, StatusBar, StatusBarContent},
 };
 
 /// Minimum terminal width.
@@ -45,6 +47,7 @@ pub fn render_shell(
     timeline: &TimelineState,
     timeline_bounds: &mut TimelinePaneBounds,
     toast: Option<&Toast>,
+    thread: Option<&ThreadDisplay>,
 ) {
     let area = frame.area();
 
@@ -64,12 +67,13 @@ pub fn render_shell(
         ])
         .split(area);
 
-    // Status bar with placeholder content
-    let status_content = StatusBarContent::placeholder();
+    // Status bar with thread-driven content
+    let status_content = StatusBarContent::from_thread(thread);
     let status_bar = StatusBar::new(&status_content, models, theme).ascii_mode(ascii_mode);
     frame.render_widget(status_bar, chunks[0]);
 
     // Main pane area
+    let phase = thread.map(|t| t.phase_kind);
     render_main_area(
         frame,
         chunks[1],
@@ -82,14 +86,12 @@ pub fn render_shell(
         show_models_panel,
         timeline,
         timeline_bounds,
+        phase,
     );
 
-    // Footer with keybinding hints (include 'r' for refresh when models panel is visible)
-    let mut hints = FooterHints::default_hints();
-    if show_models_panel {
-        // Insert refresh hint before help hint
-        hints.insert(hints.len().saturating_sub(2), KeyHint::new("r", "Refresh"));
-    }
+    // Footer with phase-aware hints
+    let phase = thread.map(|t| t.phase_kind);
+    let hints = hints_for_state(phase, screen_mode, focused_pane, show_models_panel);
     let footer = FooterHints::new(&hints, theme);
     frame.render_widget(footer, chunks[2]);
 
@@ -149,6 +151,7 @@ fn render_main_area(
     show_models_panel: bool,
     timeline: &TimelineState,
     timeline_bounds: &mut TimelinePaneBounds,
+    phase: Option<ralf_engine::thread::PhaseKind>,
 ) {
     match screen_mode {
         ScreenMode::Split => {
@@ -175,6 +178,7 @@ fn render_main_area(
                 models,
                 ascii_mode,
                 show_models_panel,
+                phase,
             );
         }
         ScreenMode::TimelineFocus => {
@@ -183,7 +187,17 @@ fn render_main_area(
         }
         ScreenMode::ContextFocus => {
             // Focus mode: only context visible, always focused
-            render_context_pane(frame, area, true, theme, borders, models, ascii_mode, show_models_panel);
+            render_context_pane(
+                frame,
+                area,
+                true,
+                theme,
+                borders,
+                models,
+                ascii_mode,
+                show_models_panel,
+                phase,
+            );
         }
     }
 }
@@ -208,7 +222,7 @@ fn render_timeline_pane(
     frame.render_widget(widget, area);
 }
 
-/// Render the context pane (right side - shows Models or Context content).
+/// Render the context pane (right side - shows phase-routed content).
 #[allow(clippy::too_many_arguments)]
 fn render_context_pane(
     frame: &mut Frame<'_>,
@@ -219,21 +233,38 @@ fn render_context_pane(
     models: &[ModelStatus],
     ascii_mode: bool,
     show_models_panel: bool,
+    phase: Option<ralf_engine::thread::PhaseKind>,
 ) {
-    if show_models_panel {
-        // Render Models panel instead of generic Context pane
+    // Route to appropriate view based on phase
+    let view = ContextView::from_phase(phase);
+
+    // NoThread view shows ModelsPanel when models panel is enabled
+    if matches!(view, ContextView::NoThread) && show_models_panel {
         let models_panel = ModelsPanel::new(models, theme)
             .ascii_mode(ascii_mode)
             .focused(focused);
         frame.render_widget(models_panel, area);
     } else {
-        let pane = Pane::new(theme, borders)
-            .title(" Context ")
-            .focused(focused)
-            .content("Context view will appear here...");
-
-        frame.render_widget(pane, area);
+        // Render placeholder for all other views (real implementations in M5-B.3/B.4)
+        render_context_placeholder(frame, view, area, focused, theme, borders);
     }
+}
+
+/// Render placeholder content for context views.
+fn render_context_placeholder(
+    frame: &mut Frame<'_>,
+    view: ContextView,
+    area: Rect,
+    focused: bool,
+    theme: &Theme,
+    borders: &BorderSet,
+) {
+    let pane = Pane::new(theme, borders)
+        .title(view.title())
+        .focused(focused)
+        .content(view.placeholder_text());
+
+    frame.render_widget(pane, area);
 }
 
 /// Render "terminal too small" warning.

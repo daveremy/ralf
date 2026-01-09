@@ -1,7 +1,11 @@
 //! Footer hints widget for keybinding display.
 //!
 //! Format: `[Tab] Focus │ [1/2/3] Modes │ [?] Help │ [q] Quit`
+//!
+//! The [`hints_for_state`] function generates phase-aware hints that change
+//! based on the current thread phase and focused pane.
 
+use ralf_engine::thread::PhaseKind;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -10,6 +14,7 @@ use ratatui::{
     widgets::{Paragraph, Widget},
 };
 
+use crate::layout::{FocusedPane, ScreenMode};
 use crate::theme::Theme;
 
 /// A single keybinding hint.
@@ -78,6 +83,133 @@ impl Widget for FooterHints<'_> {
     }
 }
 
+/// Get hints for the current state.
+///
+/// Hints depend on:
+/// - `phase`: Current thread phase (None = no thread)
+/// - `screen_mode`: Current screen mode
+/// - `focused`: Which pane has focus (used in Split mode)
+/// - `show_models_panel`: Whether models panel is showing (enables 'r' refresh)
+///
+/// In `TimelineFocus` mode, effective focus is Timeline.
+/// In `ContextFocus` mode, effective focus is Context.
+/// In `Split` mode, use the `focused` parameter.
+#[must_use]
+pub fn hints_for_state(
+    phase: Option<PhaseKind>,
+    screen_mode: ScreenMode,
+    focused: FocusedPane,
+    show_models_panel: bool,
+) -> Vec<KeyHint> {
+    // Derive effective focus from screen mode
+    let effective_focus = match screen_mode {
+        ScreenMode::TimelineFocus => FocusedPane::Timeline,
+        ScreenMode::ContextFocus => FocusedPane::Context,
+        ScreenMode::Split => focused,
+    };
+
+    hints_for_focus(phase, effective_focus, show_models_panel)
+}
+
+/// Internal helper for generating hints based on effective focus.
+fn hints_for_focus(
+    phase: Option<PhaseKind>,
+    focused: FocusedPane,
+    show_models_panel: bool,
+) -> Vec<KeyHint> {
+    let mut hints = Vec::new();
+
+    // Pane-specific hints first
+    match focused {
+        FocusedPane::Timeline => {
+            hints.push(KeyHint::new("j/k", "Navigate"));
+            hints.push(KeyHint::new("Enter", "Toggle"));
+            hints.push(KeyHint::new("y", "Copy"));
+        }
+        FocusedPane::Context => {
+            // Context hints depend on phase
+            hints.extend(context_hints_for_phase(phase));
+        }
+    }
+
+    // Common hints
+    hints.push(KeyHint::new("Tab", "Focus"));
+    hints.push(KeyHint::new("1/2/3", "Modes"));
+    if show_models_panel && phase.is_none() {
+        // Only show refresh when no thread and models panel visible
+        hints.push(KeyHint::new("r", "Refresh"));
+    }
+    hints.push(KeyHint::new("?", "Help"));
+    hints.push(KeyHint::new("q", "Quit"));
+
+    hints
+}
+
+/// Get context-pane hints for a phase.
+fn context_hints_for_phase(phase: Option<PhaseKind>) -> Vec<KeyHint> {
+    match phase {
+        // Terminal states and no thread share the same hints
+        None | Some(PhaseKind::Done | PhaseKind::Abandoned) => vec![
+            KeyHint::new("n", "New Thread"),
+            KeyHint::new("o", "Open Thread"),
+        ],
+        Some(PhaseKind::Drafting | PhaseKind::Assessing) => vec![
+            KeyHint::new("Enter", "Send"),
+            KeyHint::new("Ctrl+F", "Finalize"),
+        ],
+        Some(PhaseKind::Finalized) => vec![
+            KeyHint::new("r", "Run"),
+            KeyHint::new("e", "Edit Spec"),
+        ],
+        Some(PhaseKind::Preflight) => vec![], // Auto-progresses
+        Some(PhaseKind::PreflightFailed) => vec![
+            KeyHint::new("r", "Retry"),
+            KeyHint::new("e", "Edit Spec"),
+        ],
+        Some(PhaseKind::Configuring) => vec![
+            KeyHint::new("Enter", "Start"),
+            KeyHint::new("m", "Models"),
+        ],
+        // Note: Running can pause, Verifying cannot (different transitions)
+        Some(PhaseKind::Running) => vec![KeyHint::new("p", "Pause")],
+        Some(PhaseKind::Verifying) => {
+            // Verifying can't transition to Paused; wait for completion
+            vec![]
+        }
+        Some(PhaseKind::Paused) => vec![
+            KeyHint::new("r", "Resume"),
+            KeyHint::new("c", "Reconfigure"),
+            KeyHint::new("a", "Abandon"),
+        ],
+        Some(PhaseKind::Stuck) => vec![
+            KeyHint::new("r", "Revise Spec"),
+            KeyHint::new("c", "Reconfigure"),
+            KeyHint::new("m", "Manual Assist"),
+            KeyHint::new("d", "Diagnose"),
+            KeyHint::new("a", "Abandon"),
+        ],
+        Some(PhaseKind::Implemented) => vec![
+            KeyHint::new("Enter", "Review"),
+            KeyHint::new("p", "Polish"),
+        ],
+        Some(PhaseKind::Polishing) => vec![
+            KeyHint::new("Enter", "Finish"), // Returns to Implemented state
+        ],
+        Some(PhaseKind::PendingReview) => vec![
+            KeyHint::new("a", "Approve"),
+            KeyHint::new("j/k", "Navigate Diff"),
+            KeyHint::new("r", "Request Changes"),
+        ],
+        Some(PhaseKind::Approved) => vec![
+            KeyHint::new("Enter", "Ready"), // Transitions to ReadyToCommit
+        ],
+        Some(PhaseKind::ReadyToCommit) => vec![
+            KeyHint::new("c", "Commit"),
+            KeyHint::new("e", "Edit Message"),
+        ],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,5 +229,137 @@ mod tests {
         // Should include help and quit
         assert!(hints.iter().any(|h| h.key == "?" && h.action == "Help"));
         assert!(hints.iter().any(|h| h.key == "q" && h.action == "Quit"));
+    }
+
+    #[test]
+    fn test_hints_for_state_no_thread_context_focus() {
+        let hints = hints_for_state(None, ScreenMode::ContextFocus, FocusedPane::Context, true);
+
+        // Should have new/open thread hints
+        assert!(hints.iter().any(|h| h.key == "n" && h.action == "New Thread"));
+        assert!(hints.iter().any(|h| h.key == "o" && h.action == "Open Thread"));
+        // Should have refresh when models panel showing and no thread
+        assert!(hints.iter().any(|h| h.key == "r" && h.action == "Refresh"));
+        // Common hints
+        assert!(hints.iter().any(|h| h.key == "Tab" && h.action == "Focus"));
+        assert!(hints.iter().any(|h| h.key == "?" && h.action == "Help"));
+        assert!(hints.iter().any(|h| h.key == "q" && h.action == "Quit"));
+    }
+
+    #[test]
+    fn test_hints_for_state_timeline_focus() {
+        let hints = hints_for_state(
+            Some(PhaseKind::Running),
+            ScreenMode::TimelineFocus,
+            FocusedPane::Context, // Ignored in TimelineFocus mode
+            false,
+        );
+
+        // Timeline hints should appear
+        assert!(hints.iter().any(|h| h.key == "j/k" && h.action == "Navigate"));
+        assert!(hints.iter().any(|h| h.key == "Enter" && h.action == "Toggle"));
+        assert!(hints.iter().any(|h| h.key == "y" && h.action == "Copy"));
+    }
+
+    #[test]
+    fn test_hints_for_state_split_mode_respects_focused() {
+        // Timeline focused in split mode
+        let hints = hints_for_state(
+            Some(PhaseKind::Drafting),
+            ScreenMode::Split,
+            FocusedPane::Timeline,
+            false,
+        );
+        assert!(hints.iter().any(|h| h.key == "j/k" && h.action == "Navigate"));
+
+        // Context focused in split mode
+        let hints = hints_for_state(
+            Some(PhaseKind::Drafting),
+            ScreenMode::Split,
+            FocusedPane::Context,
+            false,
+        );
+        assert!(hints.iter().any(|h| h.key == "Enter" && h.action == "Send"));
+    }
+
+    #[test]
+    fn test_hints_for_state_running_phase() {
+        let hints = hints_for_state(
+            Some(PhaseKind::Running),
+            ScreenMode::ContextFocus,
+            FocusedPane::Context,
+            false,
+        );
+
+        // Running phase should show pause
+        assert!(hints.iter().any(|h| h.key == "p" && h.action == "Pause"));
+    }
+
+    #[test]
+    fn test_hints_for_state_paused_phase() {
+        let hints = hints_for_state(
+            Some(PhaseKind::Paused),
+            ScreenMode::ContextFocus,
+            FocusedPane::Context,
+            false,
+        );
+
+        assert!(hints.iter().any(|h| h.key == "r" && h.action == "Resume"));
+        assert!(hints.iter().any(|h| h.key == "c" && h.action == "Reconfigure"));
+        assert!(hints.iter().any(|h| h.key == "a" && h.action == "Abandon"));
+    }
+
+    #[test]
+    fn test_hints_for_state_stuck_phase() {
+        let hints = hints_for_state(
+            Some(PhaseKind::Stuck),
+            ScreenMode::ContextFocus,
+            FocusedPane::Context,
+            false,
+        );
+
+        assert!(hints.iter().any(|h| h.key == "r" && h.action == "Revise Spec"));
+        assert!(hints.iter().any(|h| h.key == "m" && h.action == "Manual Assist"));
+        assert!(hints.iter().any(|h| h.key == "d" && h.action == "Diagnose"));
+    }
+
+    #[test]
+    fn test_hints_for_state_pending_review() {
+        let hints = hints_for_state(
+            Some(PhaseKind::PendingReview),
+            ScreenMode::ContextFocus,
+            FocusedPane::Context,
+            false,
+        );
+
+        assert!(hints.iter().any(|h| h.key == "a" && h.action == "Approve"));
+        assert!(hints.iter().any(|h| h.key == "j/k" && h.action == "Navigate Diff"));
+        assert!(hints.iter().any(|h| h.key == "r" && h.action == "Request Changes"));
+    }
+
+    #[test]
+    fn test_hints_no_refresh_when_thread_active() {
+        let hints = hints_for_state(
+            Some(PhaseKind::Drafting),
+            ScreenMode::ContextFocus,
+            FocusedPane::Context,
+            true, // models panel showing
+        );
+
+        // Should NOT have refresh when thread is active
+        assert!(!hints.iter().any(|h| h.key == "r" && h.action == "Refresh"));
+    }
+
+    #[test]
+    fn test_verifying_phase_no_pause() {
+        let hints = hints_for_state(
+            Some(PhaseKind::Verifying),
+            ScreenMode::ContextFocus,
+            FocusedPane::Context,
+            false,
+        );
+
+        // Verifying cannot pause (unlike Running)
+        assert!(!hints.iter().any(|h| h.key == "p" && h.action == "Pause"));
     }
 }

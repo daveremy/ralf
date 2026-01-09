@@ -2,7 +2,7 @@
 source: crates/ralf-tui/src/lib.rs
 expression: result
 ---
-● Drafting │ "New Thread"
+● No Thread │ "Select a thread to start"
 ┌ Timeline ────────────────────────────────────────────────────────────────────┐
 │                                                                              │
 │                                                                              │
@@ -25,4 +25,4 @@ expression: result
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
-[Tab] Focus │ [1/2/3] Modes │ [?] Help │ [q] Quit
+[j/k] Navigate │ [Enter] Toggle │ [y] Copy │ [Tab] Focus │ [1/2/3] Modes │ [?] H

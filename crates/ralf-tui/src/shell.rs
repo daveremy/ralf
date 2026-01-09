@@ -24,6 +24,7 @@ use ratatui::{backend::Backend, Terminal};
 use crate::layout::{render_shell, FocusedPane, ScreenMode, MIN_HEIGHT, MIN_WIDTH};
 use crate::models::ModelStatus;
 use crate::theme::{BorderSet, IconMode, IconSet, Theme};
+use crate::thread_state::ThreadDisplay;
 use crate::timeline::{
     EventKind, ReviewEvent, ReviewResult, RunEvent, SpecEvent, SystemEvent, TimelineState,
     SCROLL_SPEED,
@@ -124,6 +125,8 @@ pub struct ShellApp {
     last_click: Option<LastClick>,
     /// Current toast notification (if any).
     pub toast: Option<Toast>,
+    /// Current thread display state (None = no thread loaded).
+    pub current_thread: Option<ThreadDisplay>,
 }
 
 impl Default for ShellApp {
@@ -165,7 +168,14 @@ impl ShellApp {
             timeline_bounds: TimelinePaneBounds::default(),
             last_click: None,
             toast: None,
+            current_thread: None, // No thread loaded initially
         }
+    }
+
+    /// Set the current thread, updating models panel visibility.
+    pub fn set_thread(&mut self, thread: Option<ThreadDisplay>) {
+        self.current_thread = thread;
+        self.show_models_panel = self.current_thread.is_none();
     }
 
     /// Show a toast notification.
@@ -562,6 +572,7 @@ pub fn run_shell<B: Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
                     &app.timeline,
                     &mut app.timeline_bounds,
                     app.toast.as_ref(),
+                    app.current_thread.as_ref(),
                 );
             })?;
 

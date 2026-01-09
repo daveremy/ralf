@@ -12,12 +12,14 @@ const INSTALL_URLS: &[(&str, &str)] = &[
 ];
 
 /// Model state for display.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModelState {
     /// Currently checking model status.
     Probing,
     /// Model probed successfully and is ready.
     Ready,
+    /// Model rate-limited during probe (with optional reset time).
+    RateLimited(Option<String>),
     /// Model rate-limited, seconds remaining (forward-looking, not used this phase).
     Cooldown(u64),
     /// Model not found, auth error, or probe failed.
@@ -28,12 +30,14 @@ impl ModelState {
     /// Get the status indicator character.
     ///
     /// - `●` (ready) - Model probed successfully
-    /// - `◐` (cooldown) - Model rate-limited
+    /// - `◐` (cooldown) - Model rate-limited (temporary)
     /// - `○` (unavailable) - Not found, auth error, or probe failed
     /// - `◌` (probing) - Currently checking
+    /// - `◉` (rate limited) - Hit usage/quota limit
     pub fn indicator(&self) -> &'static str {
         match self {
             Self::Ready => "●",
+            Self::RateLimited(_) => "◉",
             Self::Cooldown(_) => "◐",
             Self::Unavailable => "○",
             Self::Probing => "◌",
@@ -43,12 +47,14 @@ impl ModelState {
     /// Get the ASCII indicator for `NO_COLOR` mode.
     ///
     /// - `[x]` (ready)
+    /// - `[!]` (rate limited)
     /// - `[~]` (cooldown)
     /// - `[ ]` (unavailable)
     /// - `[?]` (probing)
     pub fn indicator_ascii(&self) -> &'static str {
         match self {
             Self::Ready => "[x]",
+            Self::RateLimited(_) => "[!]",
             Self::Cooldown(_) => "[~]",
             Self::Unavailable => "[ ]",
             Self::Probing => "[?]",
@@ -116,6 +122,17 @@ impl ModelStatus {
         // Check probe result
         match probe {
             Some(p) if p.success => (ModelState::Ready, Some("Ready".to_string())),
+            Some(p) if p.rate_limited => {
+                // Rate limited - show reset time if available
+                let message = match &p.rate_limit_reset {
+                    Some(reset) => format!("Rate limited (resets: {reset})"),
+                    None => "Rate limited".to_string(),
+                };
+                (
+                    ModelState::RateLimited(p.rate_limit_reset.clone()),
+                    Some(message),
+                )
+            }
             Some(p) if p.needs_auth => {
                 let message = format!("Needs auth. Run: `{} auth login`", info.name);
                 (ModelState::Unavailable, Some(message))
@@ -233,6 +250,8 @@ mod tests {
             success,
             response_time_ms: Some(100),
             needs_auth,
+            rate_limited: false,
+            rate_limit_reset: None,
             issues: if !success && !needs_auth {
                 vec!["Probe failed".to_string()]
             } else {
@@ -248,9 +267,11 @@ mod tests {
         assert_eq!(ModelState::Unavailable.indicator(), "○");
         assert_eq!(ModelState::Cooldown(60).indicator(), "◐");
         assert_eq!(ModelState::Probing.indicator(), "◌");
+        assert_eq!(ModelState::RateLimited(None).indicator(), "◉");
 
         assert_eq!(ModelState::Ready.indicator_ascii(), "[x]");
         assert_eq!(ModelState::Unavailable.indicator_ascii(), "[ ]");
+        assert_eq!(ModelState::RateLimited(None).indicator_ascii(), "[!]");
     }
 
     #[test]
