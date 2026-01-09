@@ -291,6 +291,16 @@ impl ThreadStore {
         Ok(fs::read_to_string(&path)?)
     }
 
+    /// Load the latest spec revision for a thread.
+    /// Returns `Ok(None)` if no specs exist.
+    pub fn load_latest_spec(&self, thread_id: &str) -> Result<Option<String>, PersistenceError> {
+        let revisions = self.list_specs(thread_id)?;
+        match revisions.last() {
+            Some(&rev) => Ok(Some(self.load_spec(thread_id, rev)?)),
+            None => Ok(None),
+        }
+    }
+
     /// List available spec revisions for a thread.
     pub fn list_specs(&self, thread_id: &str) -> Result<Vec<u32>, PersistenceError> {
         Self::validate_id(thread_id)?;

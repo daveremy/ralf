@@ -14,6 +14,7 @@ pub mod config;
 pub mod discovery;
 pub mod git;
 pub mod persistence;
+pub mod preflight;
 pub mod runner;
 pub mod state;
 pub mod thread;
@@ -30,6 +31,7 @@ pub use discovery::{
 };
 pub use git::{GitError, GitSafety};
 pub use persistence::{PersistenceError, ThreadStore, ThreadSummary};
+pub use preflight::{run_preflight, PreflightCheck, PreflightResult};
 pub use runner::{
     check_promise, extract_promise, get_git_info, hash_prompt, invoke_model, run_verifier,
     select_model, start_run, GitInfo, InvocationResult, RunConfig, RunEvent, RunHandle,
