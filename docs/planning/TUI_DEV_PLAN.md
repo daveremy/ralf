@@ -514,7 +514,7 @@ Build the SpecPreview artifact view (right pane) and phase transitions.
 - Finalized state shows "Ready to run"
 - Artifact actions when focused (`y` copy, `e` edit/revert)
 
-**Exit Criteria:** Right pane shows spec preview, markdown renders correctly, phase transitions work, can reach Finalized state.
+**Exit Criteria:** ✓ Right pane shows spec preview, markdown renders correctly, phase badge displays correctly. Spec copy (`y` key) works.
 
 ##### M5-B.3d: Run Artifact Views
 **Spec:** `SPEC-m5b3d-run-artifacts.md`
@@ -627,8 +627,8 @@ M5-B (Conversation & Artifacts)
   │   ├── M5-B.3a' (Slash Commands) ✓
   │   ├── M5-B.3a'' (Focus Model & Layout Rework) ✓
   │   ├── M5-B.3b (Chat Integration) ✓
-  │   ├── M5-B.3c (Spec Artifact View) ← NEXT
-  │   └── M5-B.3d (Run Artifact Views)
+  │   ├── M5-B.3c (Spec Artifact View) ✓
+  │   └── M5-B.3d (Run Artifact Views) ← NEXT
   ├── M5-B.4 (Advanced Artifact Views)
   └── M5-B.5 (Thread Management)
   │
