@@ -414,8 +414,6 @@ When Canvas is focused and showing Models:
 |-----|--------|
 | `r` | Refresh model status |
 | `a` | Authenticate (if any model needs auth) |
-| `j/k` | Navigate model list |
-| `Enter` | Select/toggle model |
 
 ### Example: Canvas Pane (Diff View)
 
