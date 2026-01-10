@@ -50,25 +50,27 @@ impl Widget for InputBar<'_> {
         let content = self.input.content();
         let cursor_pos = self.input.cursor;
 
-        let mut display = String::with_capacity(content.len() + 2);
+        let mut display = String::with_capacity(content.len() + 4);
         display.push_str("> ");
 
-        // Insert content with cursor
-        let mut cursor_drawn = false;
-        for (i, ch) in content.chars().enumerate() {
-            if self.focused && i == cursor_pos && !cursor_drawn {
-                display.push('█');
-                cursor_drawn = true;
+        // Insert cursor at position, or show placeholder when empty and unfocused
+        if self.focused {
+            // Insert characters with cursor block at cursor position
+            for (i, ch) in content.chars().enumerate() {
+                if i == cursor_pos {
+                    display.push('█');
+                }
+                display.push(ch);
             }
-            display.push(ch);
-        }
-
-        // Cursor at end
-        if self.focused && !cursor_drawn {
-            display.push('█');
-        } else if !self.focused && content.is_empty() {
-            // Show placeholder when not focused and empty
-            display.push('_');
+            // Cursor at end if we haven't drawn it yet
+            if cursor_pos >= content.chars().count() {
+                display.push('█');
+            }
+        } else {
+            display.push_str(content);
+            if content.is_empty() {
+                display.push('_');
+            }
         }
 
         let block = Block::default()

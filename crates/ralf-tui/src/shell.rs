@@ -1,9 +1,9 @@
 //! M5-A Shell: Core TUI shell implementation.
 //!
 //! This module provides the foundational TUI shell with:
-//! - Two-pane layout (Timeline | Context)
+//! - Three-way focus: Timeline, Context/Canvas, and Input panes
 //! - Status bar and footer hints
-//! - Focus management and screen modes
+//! - Screen modes: Split, Timeline-focus, Context-focus
 //! - Theme and icon support
 //! - Model discovery and probing
 //!

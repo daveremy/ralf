@@ -76,8 +76,10 @@ pub fn render_shell(
     let status_bar = StatusBar::new(&status_content, models, theme).ascii_mode(ascii_mode);
     frame.render_widget(status_bar, chunks[0]);
 
-    // Main pane area (timeline and/or canvas)
+    // Extract phase once for reuse
     let phase = thread.map(|t| t.phase_kind);
+
+    // Main pane area (timeline and/or canvas)
     render_main_area(
         frame,
         chunks[1],
@@ -98,7 +100,6 @@ pub fn render_shell(
     frame.render_widget(input_bar, chunks[2]);
 
     // Footer with status bar format: Mode │ Focus │ Phase    [pane-specific hints]
-    let phase = thread.map(|t| t.phase_kind);
     let hints = FooterHints::pane_hints(focused_pane, show_models_panel);
     let footer = FooterHints::new(&hints, theme)
         .screen_mode(screen_mode)
@@ -129,13 +130,9 @@ fn render_toast(frame: &mut Frame<'_>, area: Rect, toast: &Toast) {
     // Clear the area behind the toast
     frame.render_widget(Clear, toast_area);
 
-    // Render toast with green background for success
+    // Red background for errors, green for success
     let is_error = toast.message.contains("failed") || toast.message.contains("unavailable");
-    let bg_color = if is_error {
-        Color::Red
-    } else {
-        Color::Green
-    };
+    let bg_color = if is_error { Color::Red } else { Color::Green };
 
     let block = Block::default()
         .borders(Borders::ALL)
