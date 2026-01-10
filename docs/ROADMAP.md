@@ -81,11 +81,22 @@ AI-powered verification of completion criteria after promise tag detected.
 - Structured PASS/FAIL results
 - Run continues if criteria fail
 
-### Review Rounds
-Multi-model spec review before finalization.
-- Run spec through available models
-- Present findings as structured checklist
-- Apply suggestions into draft
+### Review Rounds (Coordinator/Collaborator Model)
+Multi-model spec review using the Coordinator + Collaborator pattern.
+- User works with coordinator AI to draft spec
+- On `/accept`, spec sent to collaborator models for review
+- Collaborators provide independent feedback
+- Coordinator synthesizes feedback and makes recommendations
+- User decides: incorporate feedback (`/edit`) or approve (`/approve`)
+
+See [Workflow UX](planning/WORKFLOW_UX.md) for detailed flow.
+
+### Workflow Status (`/status`)
+Visual workflow progress indicator.
+- Show current phase in overall workflow
+- Display available commands for current state
+- Phase-aware footer hints with next action
+- Future: slide-up status pane for persistent context
 
 ### Stuck/Paused Handling
 Robust UX for interrupted or failed runs.
@@ -112,6 +123,7 @@ Robust UX for interrupted or failed runs.
 ## Architecture References
 
 - [State Machine](state-machine.md) - ThreadPhase definitions and transitions
+- [Workflow UX](planning/WORKFLOW_UX.md) - User experience flow, Coordinator/Collaborator model
 - [TUI UX Principles](planning/TUI_UX_PRINCIPLES.md) - Design decisions
 - [TUI Dev Plan](planning/TUI_DEV_PLAN.md) - Implementation phases
 

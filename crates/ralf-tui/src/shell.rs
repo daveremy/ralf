@@ -31,10 +31,7 @@ use crate::layout::{render_shell, FocusedPane, ScreenMode, MIN_HEIGHT, MIN_WIDTH
 use crate::models::ModelStatus;
 use crate::theme::{BorderSet, IconMode, IconSet, Theme};
 use crate::thread_state::ThreadDisplay;
-use crate::timeline::{
-    EventKind, ReviewEvent, ReviewResult, RunEvent, SpecEvent, SystemEvent, TimelineState,
-    SCROLL_SPEED,
-};
+use crate::timeline::{EventKind, SpecEvent, SystemEvent, TimelineState, SCROLL_SPEED};
 use crate::ui::widgets::TextInputState;
 use ralf_engine::chat::{ChatResult, Thread, extract_spec_from_response, ChatMessage};
 use ralf_engine::config::ModelConfig;
@@ -158,6 +155,24 @@ pub struct ShellApp {
     // --- Spec preview (M5-B.3c) ---
     /// Scroll offset for spec preview pane.
     pub spec_scroll: u16,
+
+    // --- Emergency exit ---
+    /// Timestamp of last Ctrl+C press for double-tap detection.
+    last_ctrl_c: Option<std::time::Instant>,
+
+    // --- Terminal capabilities ---
+    /// Whether the terminal supports keyboard enhancement (Kitty protocol).
+    /// When true, Shift+Enter and Ctrl+Enter work for newlines.
+    pub keyboard_enhanced: bool,
+
+    // --- Layout ---
+    /// Split ratio for timeline pane (percentage, 10-90).
+    pub split_ratio: u16,
+    /// Whether the canvas/context pane is manually collapsed.
+    pub canvas_collapsed: bool,
+    /// Whether a resize drag is in progress.
+    #[allow(dead_code)] // For future mouse drag feature
+    resize_dragging: bool,
 }
 
 impl Default for ShellApp {
@@ -177,9 +192,8 @@ impl ShellApp {
         let ralf_dir = Self::ralf_dir();
         let (models, probe_complete) = Self::load_or_init_models(&ralf_dir);
 
-        // Create timeline with sample events for testing
-        let mut timeline = TimelineState::new();
-        Self::add_sample_events(&mut timeline);
+        // Create empty timeline
+        let timeline = TimelineState::new();
 
         Self {
             screen_mode: ScreenMode::default(),
@@ -208,6 +222,14 @@ impl ShellApp {
             last_chat_model: None,
             // Spec preview
             spec_scroll: 0,
+            // Emergency exit
+            last_ctrl_c: None,
+            // Terminal capabilities - detected at startup
+            keyboard_enhanced: false, // Will be set by run_shell_tui
+            // Layout
+            split_ratio: 40, // 40% timeline, 60% canvas
+            canvas_collapsed: false,
+            resize_dragging: false,
         }
     }
 
@@ -300,68 +322,6 @@ impl ShellApp {
         self.autocomplete_index = None;
     }
 
-    /// Add sample events to timeline for testing.
-    fn add_sample_events(timeline: &mut TimelineState) {
-        // System event: session start
-        timeline.push(EventKind::System(SystemEvent::info("Session started")));
-
-        // Spec event: user input
-        timeline.push(EventKind::Spec(SpecEvent::user(
-            "Add authentication to the API\nSupport JWT tokens\nInclude refresh token logic",
-        )));
-
-        // Run event: model working (multi-line, will be collapsed by default)
-        timeline.push(EventKind::Run(RunEvent::new(
-            "claude",
-            1,
-            "Analyzing codebase structure...\nFound 47 relevant files\nPlanning implementation",
-        )));
-
-        // Run event: file change
-        timeline.push(EventKind::Run(RunEvent::file_change(
-            "claude",
-            1,
-            "src/auth.rs +127",
-            "pub fn authenticate(token: &str) -> Result<User, AuthError> {\n    // JWT validation\n    let claims = decode_jwt(token)?;\n    Ok(User::from_claims(claims))\n}",
-        )));
-
-        // Review event: passed
-        timeline.push(EventKind::Review(ReviewEvent::new(
-            "cargo check passes",
-            ReviewResult::Passed,
-        )));
-
-        // Review event: failed with details
-        timeline.push(EventKind::Review(ReviewEvent::with_details(
-            "cargo test passes",
-            ReviewResult::Failed,
-            "2 tests failed:\n- test_auth_expired_token\n- test_refresh_invalid",
-        )));
-
-        // Run event: fixing tests
-        timeline.push(EventKind::Run(RunEvent::new(
-            "gemini",
-            2,
-            "Fixing test failures...\nUpdating token validation logic",
-        )));
-
-        // System event: warning
-        timeline.push(EventKind::System(SystemEvent::warning(
-            "Model rate limit approaching (80% of quota used)",
-        )));
-
-        // Review event: passed after fix
-        timeline.push(EventKind::Review(ReviewEvent::new(
-            "cargo test passes",
-            ReviewResult::Passed,
-        )));
-
-        // System event: completion
-        timeline.push(EventKind::System(SystemEvent::info(
-            "All criteria verified - ready for review",
-        )));
-    }
-
     /// Check if terminal is too small.
     pub fn is_too_small(&self) -> bool {
         self.terminal_size.0 < MIN_WIDTH || self.terminal_size.1 < MIN_HEIGHT
@@ -395,6 +355,40 @@ impl ShellApp {
             }
             ScreenMode::TimelineFocus => false,
         }
+    }
+
+    /// Check if canvas should be shown (not collapsed and has content or manually visible).
+    pub fn should_show_canvas(&self) -> bool {
+        if self.canvas_collapsed {
+            return false;
+        }
+        // Show canvas if there's spec content or models panel is shown
+        self.has_spec_content() || self.show_models_panel
+    }
+
+    /// Check if there's any spec content to display.
+    fn has_spec_content(&self) -> bool {
+        self.chat_thread
+            .as_ref()
+            .is_some_and(|t| !t.draft.trim().is_empty())
+    }
+
+    /// Toggle canvas visibility.
+    pub fn toggle_canvas(&mut self) {
+        self.canvas_collapsed = !self.canvas_collapsed;
+        // If canvas is now hidden and context was focused, move focus to timeline
+        if self.canvas_collapsed && self.focused_pane == FocusedPane::Context {
+            self.focused_pane = FocusedPane::Timeline;
+        }
+    }
+
+    /// Adjust split ratio by delta (clamped to 20-80%).
+    #[allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+    pub fn adjust_split_ratio(&mut self, delta: i16) {
+        // Safe: split_ratio is always 20-80, so no wrap possible
+        // Safe: clamp(20, 80) ensures non-negative result
+        let new_ratio = (self.split_ratio as i16 + delta).clamp(20, 80) as u16;
+        self.split_ratio = new_ratio;
     }
 
     /// Handle key event for conversation input.
@@ -437,6 +431,14 @@ impl ShellApp {
                     .modifiers
                     .intersects(KeyModifiers::SHIFT | KeyModifiers::CONTROL) =>
             {
+                self.input.insert('\n');
+                self.reset_autocomplete();
+                KeyResult::Handled
+            }
+
+            // Ctrl+J inserts newline (universal fallback - works in all terminals)
+            // Ctrl+J sends ASCII 10 (LF) which is the newline character
+            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.input.insert('\n');
                 self.reset_autocomplete();
                 KeyResult::Handled
@@ -963,6 +965,7 @@ impl ShellApp {
     ///
     /// Uses the input-first model where all character keys go to input.
     /// Global actions use modifier keybindings (Ctrl+N) or F-keys.
+    #[allow(clippy::too_many_lines)]
     pub fn handle_key_event(&mut self, key: KeyEvent) -> Option<ShellAction> {
         // Help overlay: any key closes it
         if self.show_help {
@@ -976,10 +979,44 @@ impl ShellApp {
             return None;
         }
 
+        // Ctrl+C - Emergency exit (double-tap within 1.5 seconds)
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            let now = std::time::Instant::now();
+            if let Some(last) = self.last_ctrl_c {
+                if now.duration_since(last).as_millis() < 1500 {
+                    // Double Ctrl+C - quit immediately
+                    self.should_quit = true;
+                    return None;
+                }
+            }
+            // First Ctrl+C - show hint and record time
+            self.last_ctrl_c = Some(now);
+            self.show_toast("Press Ctrl+C again to quit");
+            return None;
+        }
+
         // Escape clears input (use /quit or /exit to quit)
         if key.code == KeyCode::Esc {
             self.handle_escape();
             return None;
+        }
+
+        // Backslash - Toggle canvas visibility
+        if key.code == KeyCode::Char('\\') && !key.modifiers.contains(KeyModifiers::CONTROL) {
+            self.toggle_canvas();
+            return None;
+        }
+
+        // { / } - Adjust split ratio (only when canvas is visible)
+        if !self.canvas_collapsed {
+            if key.code == KeyCode::Char('{') {
+                self.adjust_split_ratio(-5);
+                return None;
+            }
+            if key.code == KeyCode::Char('}') {
+                self.adjust_split_ratio(5);
+                return None;
+            }
         }
 
         // Focus trap: '/' from anywhere jumps to input and inserts '/'
@@ -1400,8 +1437,12 @@ fn probe_models_parallel(timeout: Duration) -> mpsc::Receiver<ModelStatus> {
 
 /// Run the shell app main loop.
 #[allow(clippy::too_many_lines)]
-pub fn run_shell<B: Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
+pub fn run_shell<B: Backend>(
+    terminal: &mut Terminal<B>,
+    keyboard_enhanced: bool,
+) -> io::Result<()> {
     let mut app = ShellApp::new();
+    app.keyboard_enhanced = keyboard_enhanced;
 
     // Get initial terminal size
     if let Ok(size) = terminal.size() {
@@ -1441,6 +1482,10 @@ pub fn run_shell<B: Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
             // Clear expired toasts
             app.clear_expired_toast();
 
+            // Pre-compute values that need immutable access before mutable borrow
+            let show_canvas = app.should_show_canvas();
+            let split_ratio = app.split_ratio;
+
             // Render
             terminal.draw(|frame| {
                 render_shell(
@@ -1461,6 +1506,9 @@ pub fn run_shell<B: Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
                     app.last_chat_model.as_deref(),
                     app.chat_thread.as_ref().map(|t| t.draft.as_str()),
                     app.spec_scroll,
+                    app.keyboard_enhanced,
+                    split_ratio,
+                    show_canvas,
                 );
 
                 // Render overlays on top
@@ -1747,6 +1795,57 @@ mod tests {
         app.handle_key_event(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
         app.handle_key_event(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE));
         assert_eq!(app.input.content(), "helloq123");
+    }
+
+    #[test]
+    fn test_shift_enter_inserts_newline() {
+        // Shift+Enter should insert newline, not submit
+        let mut app = ShellApp::new();
+        app.focused_pane = FocusedPane::Input;
+
+        // Type some text
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::NONE));
+        assert_eq!(app.input.content(), "hi");
+
+        // Shift+Enter should insert newline
+        app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT));
+        assert_eq!(app.input.content(), "hi\n");
+
+        // Type more
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
+        assert_eq!(app.input.content(), "hi\nthere");
+
+        // Input should NOT have been submitted (no chat started)
+        assert!(app.chat_thread.is_none());
+    }
+
+    #[test]
+    fn test_ctrl_enter_inserts_newline() {
+        // Ctrl+Enter should also insert newline
+        let mut app = ShellApp::new();
+        app.focused_pane = FocusedPane::Input;
+
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE));
+        assert_eq!(app.input.content(), "a\nb");
+    }
+
+    #[test]
+    fn test_ctrl_j_inserts_newline() {
+        // Ctrl+J should insert newline (universal fallback that works in all terminals)
+        let mut app = ShellApp::new();
+        app.focused_pane = FocusedPane::Input;
+
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+        assert_eq!(app.input.content(), "x\ny");
     }
 
     #[test]

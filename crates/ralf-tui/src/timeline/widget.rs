@@ -10,7 +10,7 @@ use ratatui::{
 
 use super::event::{EventKind, ReviewResult, SystemLevel, TimelineEvent, MAX_EXPANDED_LINES};
 use super::state::TimelineState;
-use crate::text::render_markdown;
+use crate::text::{render_markdown, wrap_lines, wrap_text};
 use crate::theme::Theme;
 
 /// Timeline pane widget.
@@ -20,6 +20,8 @@ pub struct TimelineWidget<'a> {
     focused: bool,
     /// Whether to render with a border (default: true).
     with_border: bool,
+    /// Whether the canvas is showing spec content (auto-collapse assistant spec events).
+    canvas_shows_spec: bool,
 }
 
 impl<'a> TimelineWidget<'a> {
@@ -30,6 +32,7 @@ impl<'a> TimelineWidget<'a> {
             theme,
             focused: false,
             with_border: true,
+            canvas_shows_spec: false,
         }
     }
 
@@ -47,6 +50,16 @@ impl<'a> TimelineWidget<'a> {
     #[must_use]
     pub fn with_border(mut self, border: bool) -> Self {
         self.with_border = border;
+        self
+    }
+
+    /// Set whether the canvas is showing spec content.
+    ///
+    /// When true, assistant spec events (non-user) will be auto-collapsed to avoid
+    /// duplicating content shown in the canvas pane.
+    #[must_use]
+    pub fn canvas_shows_spec(mut self, shows_spec: bool) -> Self {
+        self.canvas_shows_spec = shows_spec;
         self
     }
 
@@ -93,8 +106,7 @@ impl<'a> TimelineWidget<'a> {
         // Selection indicator
         let selection_prefix = if selected { "\u{25b8} " } else { "  " }; // ▸ or space
 
-        // Line 1: timestamp + badge + attribution
-        let time_str = event.time_str();
+        // Line 1: badge + attribution (no timestamp)
         let badge = event.badge();
         let attribution = event.attribution();
         let badge_color = self.badge_color(event);
@@ -108,8 +120,6 @@ impl<'a> TimelineWidget<'a> {
                     self.theme.base
                 }),
             ),
-            Span::styled(&time_str, Style::default().fg(self.theme.muted)),
-            Span::raw("  "),
             Span::styled("[", Style::default().fg(self.theme.muted)),
             Span::styled(badge, Style::default().fg(badge_color)),
             Span::styled("] ", Style::default().fg(self.theme.muted)),
@@ -132,8 +142,13 @@ impl<'a> TimelineWidget<'a> {
         }
 
         // Line 2+: content
+        // Force collapse assistant spec events when canvas is showing spec
+        let is_assistant_spec = matches!(&event.kind, EventKind::Spec(spec) if !spec.is_user);
+        let force_collapse = self.canvas_shows_spec && is_assistant_spec;
+        let effectively_collapsed = event.collapsed || force_collapse;
+
         let collapse_indicator = if event.is_collapsible() {
-            if event.collapsed {
+            if effectively_collapsed {
                 "\u{25b8} " // ▸
             } else {
                 "\u{25be} " // ▾
@@ -142,20 +157,27 @@ impl<'a> TimelineWidget<'a> {
             "  "
         };
 
-        if event.collapsed || !event.is_collapsible() {
-            // Single line summary
+        if effectively_collapsed || !event.is_collapsible() {
+            // Collapsed: wrap summary text instead of truncating
             let summary = event.summary();
-            let max_len = width.saturating_sub(6); // Account for prefix
-            let display = truncate_str(&summary, max_len);
+            let content_width = width.saturating_sub(9); // Account for indent + prefix
+            let wrapped = wrap_text(&summary, content_width);
 
-            let line = Line::from(vec![
-                Span::raw("       "), // Indent to align with content
-                Span::styled(collapse_indicator, Style::default().fg(self.theme.muted)),
-                Span::styled(display, Style::default().fg(self.theme.text)),
-            ]);
-            let para = Paragraph::new(line);
-            para.render(Rect::new(area.x, y, area.width, 1), buf);
-            y += 1;
+            for (i, line_text) in wrapped.iter().enumerate() {
+                if y >= area.y + area.height {
+                    break;
+                }
+
+                let prefix = if i == 0 { collapse_indicator } else { "  " };
+                let line = Line::from(vec![
+                    Span::raw("       "), // Indent to align with content
+                    Span::styled(prefix, Style::default().fg(self.theme.muted)),
+                    Span::styled(line_text.clone(), Style::default().fg(self.theme.text)),
+                ]);
+                let para = Paragraph::new(line);
+                para.render(Rect::new(area.x, y, area.width, 1), buf);
+                y += 1;
+            }
         } else {
             // Expanded content - check if assistant message for markdown rendering
             let is_assistant_message = matches!(
@@ -163,15 +185,23 @@ impl<'a> TimelineWidget<'a> {
                 EventKind::Spec(spec) if !spec.is_user
             );
 
+            // Calculate available width for content (accounting for indent + prefix)
+            let content_width = width.saturating_sub(9);
+
+            // Selected events show all content; non-selected are truncated
+            let max_lines = if selected { usize::MAX } else { MAX_EXPANDED_LINES };
+
             if is_assistant_message {
                 // Render assistant messages with markdown styling
                 let content = event.copyable_content();
-                let md_lines = render_markdown(&content, width.saturating_sub(9), self.theme);
-                let total_lines = md_lines.len();
-                let display_lines = total_lines.min(MAX_EXPANDED_LINES);
-                let has_more = total_lines > MAX_EXPANDED_LINES;
+                let md_lines = render_markdown(&content, content_width, self.theme);
+                // Wrap lines to fit available width
+                let wrapped_lines = wrap_lines(md_lines, content_width);
+                let total_lines = wrapped_lines.len();
+                let display_lines = total_lines.min(max_lines);
+                let has_more = total_lines > max_lines;
 
-                for (i, md_line) in md_lines.into_iter().take(display_lines).enumerate() {
+                for (i, md_line) in wrapped_lines.into_iter().take(display_lines).enumerate() {
                     if y >= area.y + area.height {
                         break;
                     }
@@ -191,9 +221,9 @@ impl<'a> TimelineWidget<'a> {
                     y += 1;
                 }
 
-                // Show "[+N more]" if truncated
+                // Show "[+N more]" if truncated (only for non-selected events)
                 if has_more && y < area.y + area.height {
-                    let more = total_lines - MAX_EXPANDED_LINES;
+                    let more = total_lines - max_lines;
                     let line = Line::from(vec![
                         Span::raw("         "),
                         Span::styled(
@@ -207,32 +237,37 @@ impl<'a> TimelineWidget<'a> {
                 }
             } else {
                 // Plain text rendering for user/system messages
+                // Wrap each content line to fit available width
                 let content_lines = event.content_lines();
-                let display_lines = content_lines.len().min(MAX_EXPANDED_LINES);
-                let has_more = content_lines.len() > MAX_EXPANDED_LINES;
+                let mut wrapped_content: Vec<String> = Vec::new();
+                for line in &content_lines {
+                    wrapped_content.extend(wrap_text(line, content_width));
+                }
 
-                for (i, content_line) in content_lines.iter().take(display_lines).enumerate() {
+                let total_lines = wrapped_content.len();
+                let display_lines = total_lines.min(max_lines);
+                let has_more = total_lines > max_lines;
+
+                for (i, content_line) in wrapped_content.iter().take(display_lines).enumerate() {
                     if y >= area.y + area.height {
                         break;
                     }
 
                     let prefix = if i == 0 { collapse_indicator } else { "  " };
-                    let max_len = width.saturating_sub(9);
-                    let display = truncate_str(content_line, max_len);
 
                     let line = Line::from(vec![
                         Span::raw("       "),
                         Span::styled(prefix, Style::default().fg(self.theme.muted)),
-                        Span::styled(display, Style::default().fg(self.theme.text)),
+                        Span::styled(content_line.clone(), Style::default().fg(self.theme.text)),
                     ]);
                     let para = Paragraph::new(line);
                     para.render(Rect::new(area.x, y, area.width, 1), buf);
                     y += 1;
                 }
 
-                // Show "[+N more]" if truncated
+                // Show "[+N more]" if truncated (only for non-selected events)
                 if has_more && y < area.y + area.height {
-                    let more = content_lines.len() - MAX_EXPANDED_LINES;
+                    let more = total_lines - max_lines;
                     let line = Line::from(vec![
                         Span::raw("         "),
                         Span::styled(
@@ -321,28 +356,9 @@ impl Widget for TimelineWidget<'_> {
     }
 }
 
-/// Truncate a string to `max_len`, adding ellipsis if needed.
-fn truncate_str(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else if max_len > 3 {
-        format!("{}...", &s[..max_len - 3])
-    } else {
-        s[..max_len].to_string()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_truncate_str() {
-        assert_eq!(truncate_str("short", 10), "short");
-        assert_eq!(truncate_str("this is a long string", 10), "this is...");
-        assert_eq!(truncate_str("abc", 3), "abc");
-        assert_eq!(truncate_str("abcd", 3), "abc");
-    }
 
     #[test]
     fn test_timeline_widget_creation() {

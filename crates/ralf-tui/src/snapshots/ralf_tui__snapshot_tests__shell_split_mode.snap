@@ -25,4 +25,4 @@ expression: result
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │> _                                                                           │
 └──────────────────────────────────────────────────────────────────────────────┘
-Split │ Timeline                   [j/k] navigate │ [y] copy │ [Tab] focus
+Split │ Timeline      [j/k] scroll │ [y] copy │ [\] canvas │ [Tab] focus

@@ -147,6 +147,11 @@ pub fn run_shell_tui() -> Result<(), Box<dyn std::error::Error>> {
     // Install panic hook first so terminal is restored on panic
     install_panic_hook();
 
+    // Detect keyboard enhancement support BEFORE entering raw mode
+    // (the check can conflict with event reading if done after)
+    let keyboard_enhanced =
+        crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
+
     // Create tokio runtime for async chat operations
     let rt = tokio::runtime::Runtime::new()?;
     let _guard_rt = rt.enter(); // Keep runtime active for tokio::spawn
@@ -156,13 +161,12 @@ pub fn run_shell_tui() -> Result<(), Box<dyn std::error::Error>> {
     let _guard = TerminalGuard;
 
     // Enable keyboard enhancement for proper Shift+Enter detection.
+    // Only use DISAMBIGUATE_ESCAPE_CODES - REPORT_EVENT_TYPES causes double input
+    // by reporting both press and release events.
     // Some terminals (legacy Windows) don't support this; ignore errors.
     let _ = execute!(
         stdout(),
-        PushKeyboardEnhancementFlags(
-            KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
-        )
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
     );
 
     let mut stdout = stdout();
@@ -170,8 +174,8 @@ pub fn run_shell_tui() -> Result<(), Box<dyn std::error::Error>> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Run the shell
-    shell::run_shell(&mut terminal)?;
+    // Run the shell with keyboard enhancement info
+    shell::run_shell(&mut terminal, keyboard_enhanced)?;
 
     // Restore cursor before guard drops
     terminal.show_cursor()?;
@@ -635,6 +639,9 @@ mod snapshot_tests {
                     None,  // loading_model
                     None,  // spec_content
                     0,     // spec_scroll
+                    false, // keyboard_enhanced
+                    40,    // split_ratio
+                    true,  // show_canvas
                 );
             })
             .expect("Failed to draw");

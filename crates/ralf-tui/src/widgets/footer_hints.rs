@@ -104,32 +104,51 @@ impl<'a> FooterHints<'a> {
     }
 
     /// Get pane-specific hints based on focused pane.
-    pub fn pane_hints(focused: FocusedPane, show_models_panel: bool) -> Vec<KeyHint> {
+    ///
+    /// `keyboard_enhanced` indicates whether the terminal supports Kitty keyboard protocol,
+    /// which enables Ctrl+Enter for newlines. Falls back to Ctrl+J otherwise.
+    pub fn pane_hints(
+        focused: FocusedPane,
+        show_models_panel: bool,
+        keyboard_enhanced: bool,
+    ) -> Vec<KeyHint> {
         match focused {
             FocusedPane::Timeline => vec![
-                KeyHint::new("j/k", "navigate"),
+                KeyHint::new("j/k", "scroll"),
                 KeyHint::new("y", "copy"),
+                KeyHint::new("\\", "canvas"),
                 KeyHint::new("Tab", "focus"),
             ],
             FocusedPane::Context => {
                 if show_models_panel {
                     vec![
                         KeyHint::new("r", "refresh"),
+                        KeyHint::new("\\", "canvas"),
                         KeyHint::new("Tab", "focus"),
                     ]
                 } else {
                     vec![
                         KeyHint::new("j/k", "scroll"),
                         KeyHint::new("y", "copy"),
+                        KeyHint::new("\\", "canvas"),
                         KeyHint::new("Tab", "focus"),
                     ]
                 }
             }
-            FocusedPane::Input => vec![
-                KeyHint::new("Enter", "send"),
-                KeyHint::new("/", "commands"),
-                KeyHint::new("Tab", "focus"),
-            ],
+            FocusedPane::Input => {
+                // Show Ctrl+Enter if terminal supports it, otherwise Ctrl+J
+                let newline_hint = if keyboard_enhanced {
+                    KeyHint::new("Ctrl+Enter", "newline")
+                } else {
+                    KeyHint::new("Ctrl+J", "newline")
+                };
+                vec![
+                    KeyHint::new("Enter", "send"),
+                    newline_hint,
+                    KeyHint::new("/", "commands"),
+                    KeyHint::new("Tab", "focus"),
+                ]
+            }
         }
     }
 }
@@ -257,7 +276,7 @@ fn hints_for_focus(
         }
         FocusedPane::Input => {
             hints.push(KeyHint::new("Enter", "Send"));
-            hints.push(KeyHint::new("Shift+Enter", "Newline"));
+            hints.push(KeyHint::new("Ctrl+J", "Newline"));
         }
     }
 

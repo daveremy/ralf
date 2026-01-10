@@ -1,11 +1,13 @@
 //! Full-width input bar widget.
 //!
 //! Always visible at the bottom of the screen for text entry.
+//! Supports multi-line input with Ctrl+J for newlines.
 
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::Style,
+    text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Widget},
 };
 
@@ -48,36 +50,77 @@ impl<'a> InputBar<'a> {
         self
     }
 
-    /// Build the display string for normal (non-loading) input.
-    fn build_input_display(&self) -> String {
+    /// Build Lines for multi-line input display.
+    /// Returns the lines to display and which line index contains the cursor.
+    fn build_input_lines(&self) -> (Vec<Line<'static>>, usize) {
         let content = self.input.content();
         let cursor_pos = self.input.cursor;
-        let mut display = String::with_capacity(content.len() + 4);
-        display.push_str("> ");
 
-        if self.focused {
-            // Insert characters with cursor block at cursor position
-            for (i, ch) in content.chars().enumerate() {
-                if i == cursor_pos {
-                    display.push('█');
-                }
-                display.push(ch);
-            }
-            // Cursor at end if we haven't drawn it yet
-            if cursor_pos >= content.chars().count() {
-                display.push('█');
-            }
+        // Split content into lines
+        let text_lines: Vec<&str> = if content.is_empty() {
+            vec![""]
         } else {
-            display.push_str(content);
-            if content.is_empty() {
-                display.push('_');
+            content.split('\n').collect()
+        };
+
+        // Find which line the cursor is on
+        let mut char_count = 0;
+        let mut cursor_line = 0;
+        let mut cursor_col = 0;
+
+        for (line_idx, line) in text_lines.iter().enumerate() {
+            let line_len = line.chars().count();
+            if cursor_pos <= char_count + line_len {
+                cursor_line = line_idx;
+                cursor_col = cursor_pos - char_count;
+                break;
+            }
+            // +1 for the newline character
+            char_count += line_len + 1;
+            cursor_line = line_idx;
+            cursor_col = 0; // Will be at start of next line
+        }
+
+        // Build display lines
+        let mut lines = Vec::with_capacity(text_lines.len());
+
+        for (line_idx, line_text) in text_lines.iter().enumerate() {
+            let prefix = if line_idx == 0 { "> " } else { "  " };
+
+            if self.focused && line_idx == cursor_line {
+                // This line has the cursor - insert cursor block
+                let mut spans = vec![Span::raw(prefix.to_string())];
+                let chars: Vec<char> = line_text.chars().collect();
+
+                if cursor_col < chars.len() {
+                    // Cursor in middle of line
+                    let before: String = chars[..cursor_col].iter().collect();
+                    let after: String = chars[cursor_col..].iter().collect();
+                    spans.push(Span::raw(before));
+                    spans.push(Span::raw("█"));
+                    spans.push(Span::raw(after));
+                } else {
+                    // Cursor at end of line
+                    spans.push(Span::raw(line_text.to_string()));
+                    spans.push(Span::raw("█"));
+                }
+                lines.push(Line::from(spans));
+            } else {
+                // Normal line without cursor
+                let display = if line_idx == 0 && line_text.is_empty() && !self.focused {
+                    format!("{prefix}_")
+                } else {
+                    format!("{prefix}{line_text}")
+                };
+                lines.push(Line::from(display));
             }
         }
 
-        display
+        (lines, cursor_line)
     }
 }
 
+#[allow(clippy::cast_possible_truncation)]
 impl Widget for InputBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         // Border style based on focus
@@ -87,28 +130,36 @@ impl Widget for InputBar<'_> {
             Style::default().fg(self.theme.border)
         };
 
-        // Build input line - show loading indicator or normal input
-        let display = if self.loading {
-            let model = self.loading_model.unwrap_or("model");
-            format!("● Waiting for {model}...")
-        } else {
-            self.build_input_display()
-        };
-
-        // Text style - dimmed when loading
-        let text_style = if self.loading {
-            Style::default().fg(self.theme.muted)
-        } else {
-            Style::default().fg(self.theme.text)
-        };
-
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(border_style);
 
-        let paragraph = Paragraph::new(display)
-            .block(block)
-            .style(text_style);
+        // Calculate inner height (area minus borders)
+        let inner_height = area.height.saturating_sub(2) as usize;
+
+        // Build content - show loading indicator or normal input
+        let paragraph = if self.loading {
+            let model = self.loading_model.unwrap_or("model");
+            let display = format!("● Waiting for {model}...");
+            Paragraph::new(display)
+                .block(block)
+                .style(Style::default().fg(self.theme.muted))
+        } else {
+            let (lines, cursor_line) = self.build_input_lines();
+
+            // Calculate scroll offset to keep cursor visible
+            let scroll_offset = if lines.len() <= inner_height {
+                0
+            } else {
+                // Scroll so cursor line is visible (show it at bottom if needed)
+                cursor_line.saturating_sub(inner_height.saturating_sub(1))
+            };
+
+            Paragraph::new(lines)
+                .block(block)
+                .style(Style::default().fg(self.theme.text))
+                .scroll((scroll_offset as u16, 0))
+        };
 
         paragraph.render(area, buf);
     }
