@@ -67,9 +67,29 @@ struct TerminalGuard;
 
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = disable_raw_mode();
-        let _ = execute!(stdout(), DisableMouseCapture, LeaveAlternateScreen, ShowCursor);
+        restore_terminal();
     }
+}
+
+/// Restore terminal to normal mode.
+///
+/// Called by `TerminalGuard::drop` and panic hook to ensure terminal is usable.
+fn restore_terminal() {
+    let _ = disable_raw_mode();
+    let _ = execute!(stdout(), DisableMouseCapture, LeaveAlternateScreen, ShowCursor);
+}
+
+/// Install panic hook that restores terminal before printing panic info.
+///
+/// Without this, panics leave the terminal in raw mode and the error is garbled.
+fn install_panic_hook() {
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        // Restore terminal first so panic message is readable
+        restore_terminal();
+        // Then run the original hook (prints backtrace, etc.)
+        original_hook(panic_info);
+    }));
 }
 
 /// Run the TUI application.
@@ -77,6 +97,9 @@ impl Drop for TerminalGuard {
 /// This is the main entry point for the TUI. It sets up the terminal,
 /// runs the event loop, and restores the terminal on exit.
 pub async fn run_tui(repo_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    // Install panic hook first so terminal is restored on panic
+    install_panic_hook();
+
     // Setup terminal with RAII guard for cleanup
     enable_raw_mode()?;
     let _guard = TerminalGuard;
@@ -114,6 +137,13 @@ pub async fn run_tui(repo_path: &Path) -> Result<(), Box<dyn std::error::Error>>
 /// - Focus management and screen modes
 /// - Catppuccin theme and icon support
 pub fn run_shell_tui() -> Result<(), Box<dyn std::error::Error>> {
+    // Install panic hook first so terminal is restored on panic
+    install_panic_hook();
+
+    // Create tokio runtime for async chat operations
+    let rt = tokio::runtime::Runtime::new()?;
+    let _guard_rt = rt.enter(); // Keep runtime active for tokio::spawn
+
     // Setup terminal with RAII guard for cleanup
     enable_raw_mode()?;
     let _guard = TerminalGuard;
@@ -579,8 +609,10 @@ mod snapshot_tests {
                     &timeline_state,
                     &input_state,
                     &mut timeline_bounds,
-                    None, // toast
-                    None, // thread (no thread loaded)
+                    None,  // toast
+                    None,  // thread (no thread loaded)
+                    false, // chat_loading
+                    None,  // loading_model
                 );
             })
             .expect("Failed to draw");

@@ -51,6 +51,8 @@ pub fn render_shell(
     timeline_bounds: &mut TimelinePaneBounds,
     toast: Option<&Toast>,
     thread: Option<&ThreadDisplay>,
+    chat_loading: bool,
+    loading_model: Option<&str>,
 ) {
     let area = frame.area();
 
@@ -96,7 +98,9 @@ pub fn render_shell(
     );
 
     // Full-width input bar (always visible)
-    let input_bar = InputBar::new(input, theme).focused(focused_pane == FocusedPane::Input);
+    let input_bar = InputBar::new(input, theme)
+        .focused(focused_pane == FocusedPane::Input)
+        .loading(chat_loading, loading_model);
     frame.render_widget(input_bar, chunks[2]);
 
     // Footer with status bar format: Mode │ Focus │ Phase    [pane-specific hints]

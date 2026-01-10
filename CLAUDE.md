@@ -193,6 +193,44 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 - New features require tests
 - Keep modules focused and small
 
+## Testing Strategy
+
+See `docs/testing.md` for comprehensive testing guidelines. Key principles:
+
+### Test Requirements for New Code
+
+1. **Unit tests** for new functions/methods
+2. **Integration tests** for user-facing flows (event sequences)
+3. **`#[tokio::test]`** when using `tokio::spawn` or async channels
+4. **Snapshot tests** when changing visual output
+
+### TUI Testing Checklist
+
+- [ ] Test all code paths (not just early-return branches)
+- [ ] Test async flows with `#[tokio::test]`
+- [ ] Test state preservation (actions don't break unrelated state)
+- [ ] Test error paths (not just happy path)
+
+### Common Pitfalls
+
+```rust
+// BAD: Only tests the early-return "no model" path
+#[test]
+fn test_send_chat() {
+    let mut app = ShellApp::new(); // All models still probing
+    app.send_chat_message("test"); // Returns early, spawn never tested!
+}
+
+// GOOD: Actually tests the tokio::spawn path
+#[tokio::test]
+async fn test_send_chat_spawns() {
+    let mut app = ShellApp::new();
+    app.models[0].state = ModelState::Ready; // Now spawn executes
+    app.send_chat_message("test");
+    assert!(app.chat_rx.is_some()); // Verify async channel created
+}
+```
+
 ## Architecture
 
 See `docs/ROADMAP.md` for the project roadmap and `docs/state-machine.md` for the thread state machine design.

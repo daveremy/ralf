@@ -72,6 +72,8 @@ impl TimelineEvent {
             EventKind::Spec(e) => {
                 if e.is_user {
                     "User".to_string()
+                } else if let Some(ref model) = e.model {
+                    model.clone()
                 } else {
                     "System".to_string()
                 }
@@ -200,6 +202,8 @@ pub struct SpecEvent {
     pub content: String,
     /// Whether this is user input vs system-generated.
     pub is_user: bool,
+    /// Model name for assistant responses.
+    pub model: Option<String>,
 }
 
 impl SpecEvent {
@@ -208,6 +212,16 @@ impl SpecEvent {
         Self {
             content: content.into(),
             is_user: true,
+            model: None,
+        }
+    }
+
+    /// Create an assistant (AI) spec event with model attribution.
+    pub fn assistant(content: impl Into<String>, model: impl Into<String>) -> Self {
+        Self {
+            content: content.into(),
+            is_user: false,
+            model: Some(model.into()),
         }
     }
 
@@ -216,6 +230,7 @@ impl SpecEvent {
         Self {
             content: content.into(),
             is_user: false,
+            model: None,
         }
     }
 }
@@ -361,6 +376,17 @@ mod tests {
         assert_eq!(event.badge(), "SPEC");
         assert_eq!(event.attribution(), "User");
         assert_eq!(event.summary(), "Add login feature");
+    }
+
+    #[test]
+    fn test_spec_event_assistant() {
+        let event = TimelineEvent::new(
+            1,
+            EventKind::Spec(SpecEvent::assistant("Here's a draft spec...", "claude")),
+        );
+        assert_eq!(event.badge(), "SPEC");
+        assert_eq!(event.attribution(), "claude");
+        assert_eq!(event.summary(), "Here's a draft spec...");
     }
 
     #[test]

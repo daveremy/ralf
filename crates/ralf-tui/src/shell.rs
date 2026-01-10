@@ -25,6 +25,7 @@ use ratatui::{
     layout::Rect,
     Terminal,
 };
+use tokio::sync::mpsc as tokio_mpsc;
 
 use crate::layout::{render_shell, FocusedPane, ScreenMode, MIN_HEIGHT, MIN_WIDTH};
 use crate::models::ModelStatus;
@@ -35,7 +36,10 @@ use crate::timeline::{
     SCROLL_SPEED,
 };
 use crate::ui::widgets::TextInputState;
+use ralf_engine::chat::{ChatResult, Thread, extract_spec_from_response, ChatMessage};
+use ralf_engine::config::ModelConfig;
 use ralf_engine::discovery::{discover_models, probe_model_with_info, KNOWN_MODELS};
+use ralf_engine::runner::RunnerError;
 
 /// Maximum time between clicks to count as double-click.
 const DOUBLE_CLICK_THRESHOLD: Duration = Duration::from_millis(500);
@@ -140,6 +144,16 @@ pub struct ShellApp {
     pub show_help: bool,
     /// Autocomplete state (selected index into completions).
     pub autocomplete_index: Option<usize>,
+
+    // --- Chat integration (M5-B.3b) ---
+    /// Active chat thread (None until first message).
+    pub chat_thread: Option<Thread>,
+    /// Channel for receiving chat results from async task.
+    chat_rx: Option<tokio_mpsc::UnboundedReceiver<Result<ChatResult, RunnerError>>>,
+    /// Whether waiting for AI response.
+    pub chat_loading: bool,
+    /// Last model used (for error attribution).
+    last_chat_model: Option<String>,
 }
 
 impl Default for ShellApp {
@@ -155,11 +169,9 @@ impl ShellApp {
         let icons = IconSet::new(ui_config.icons);
         let borders = BorderSet::new(ui_config.icons);
 
-        // Initialize models with "Probing" state
-        let models: Vec<ModelStatus> = KNOWN_MODELS
-            .iter()
-            .map(|name| ModelStatus::probing(name))
-            .collect();
+        // Try to load cached model status (< 5 min old)
+        let ralf_dir = Self::ralf_dir();
+        let (models, probe_complete) = Self::load_or_init_models(&ralf_dir);
 
         // Create timeline with sample events for testing
         let mut timeline = TimelineState::new();
@@ -175,7 +187,7 @@ impl ShellApp {
             terminal_size: (80, 24), // Default, updated on first render
             should_quit: false,
             models,
-            probe_complete: false,
+            probe_complete,
             show_models_panel: true, // Show by default until a thread is loaded
             timeline,
             timeline_bounds: TimelinePaneBounds::default(),
@@ -185,6 +197,11 @@ impl ShellApp {
             input: TextInputState::new(),
             show_help: false,
             autocomplete_index: None,
+            // Chat integration
+            chat_thread: None,
+            chat_rx: None,
+            chat_loading: false,
+            last_chat_model: None,
         }
     }
 
@@ -621,11 +638,217 @@ impl ShellApp {
             }
         }
 
-        // Regular message - placeholder for chat integration
-        self.timeline.push(EventKind::System(SystemEvent::info(
-            format!("[Input received: {} chars]", content.len()),
-        )));
+        // Regular message - send to chat
+        self.send_chat_message(&content);
         None
+    }
+
+    // --- Chat integration (M5-B.3b) ---
+
+    /// Get the first available (ready) model for chat.
+    fn get_available_model(&self) -> Option<ModelConfig> {
+        let ready = self.models.iter().find(|m| m.is_ready())?;
+        Some(ModelConfig::default_for(&ready.name))
+    }
+
+    /// Send a chat message to the AI.
+    fn send_chat_message(&mut self, message: &str) {
+        use ralf_engine::chat::invoke_chat;
+
+        // Block if already waiting for response
+        if self.chat_loading {
+            self.show_toast("Waiting for response...");
+            return;
+        }
+
+        // Get model config first (before borrowing thread)
+        let Some(model_config) = self.get_available_model() else {
+            self.show_toast("No model available");
+            self.timeline.push(EventKind::System(SystemEvent::error(
+                "No model available for chat",
+            )));
+            return;
+        };
+
+        // Create thread if needed
+        if self.chat_thread.is_none() {
+            self.chat_thread = Some(Thread::new());
+            // Hide models panel when thread is active
+            self.show_models_panel = false;
+        }
+
+        // Add user message to timeline immediately
+        self.timeline.push(EventKind::Spec(SpecEvent::user(message)));
+
+        // Add to thread and build context
+        let chat_context = {
+            let thread = self.chat_thread.as_mut().unwrap();
+            thread.add_message(ChatMessage::user(message));
+            thread.to_context()
+        };
+
+        // Store model name for error attribution
+        self.last_chat_model = Some(model_config.name.clone());
+        self.chat_loading = true;
+
+        // Spawn async chat
+        let (tx, rx) = tokio_mpsc::unbounded_channel();
+        self.chat_rx = Some(rx);
+
+        let model = model_config.clone();
+        let timeout = model.timeout_seconds;
+        tokio::spawn(async move {
+            let result = invoke_chat(&model, &chat_context, timeout).await;
+            let _ = tx.send(result);
+        });
+
+        // Update thread display
+        self.update_thread_display_from_chat();
+    }
+
+    /// Poll for chat response from async task.
+    ///
+    /// Call this in the event loop to check for completed chat invocations.
+    pub fn poll_chat_response(&mut self) {
+        use tokio::sync::mpsc::error::TryRecvError;
+
+        let Some(rx) = self.chat_rx.as_mut() else {
+            return;
+        };
+
+        match rx.try_recv() {
+            Ok(Ok(result)) => {
+                self.chat_loading = false;
+
+                // Add AI response to timeline
+                self.timeline.push(EventKind::Spec(SpecEvent::assistant(
+                    &result.content,
+                    &result.model,
+                )));
+
+                // Update thread and save
+                let ralf_dir = Self::ralf_dir();
+                let save_error = if let Some(thread) = self.chat_thread.as_mut() {
+                    thread.add_message(ChatMessage::assistant(&result.content, &result.model));
+
+                    // Extract and store draft
+                    if let Some(spec) = extract_spec_from_response(&result.content) {
+                        thread.draft = spec;
+                    }
+
+                    // Save thread
+                    thread.save(&ralf_dir).err()
+                } else {
+                    None
+                };
+
+                if let Some(e) = save_error {
+                    self.show_toast(format!("Save failed: {e}"));
+                }
+
+                // Update model status to Ready
+                self.update_model_status(Ok(()));
+
+                // Update thread display
+                self.update_thread_display_from_chat();
+            }
+            Ok(Err(e)) => {
+                self.chat_loading = false;
+
+                // Add error to timeline
+                self.timeline
+                    .push(EventKind::System(SystemEvent::error(e.to_string())));
+
+                // Update model status based on error
+                self.update_model_status(Err(&e));
+            }
+            Err(TryRecvError::Empty) => {
+                // Still waiting, nothing to do
+            }
+            Err(TryRecvError::Disconnected) => {
+                // Channel closed unexpectedly
+                self.chat_rx = None;
+                self.chat_loading = false;
+            }
+        }
+    }
+
+    /// Update `ThreadDisplay` from chat state.
+    fn update_thread_display_from_chat(&mut self) {
+        use ralf_engine::chat::draft_has_promise;
+        use ralf_engine::thread::PhaseKind;
+
+        if let Some(thread) = &self.chat_thread {
+            let phase = if draft_has_promise(&thread.draft) {
+                PhaseKind::Finalized
+            } else if !thread.draft.is_empty() {
+                PhaseKind::Assessing
+            } else {
+                PhaseKind::Drafting
+            };
+
+            self.current_thread = Some(ThreadDisplay {
+                id: thread.id.clone(),
+                title: thread.title.clone(),
+                phase_kind: phase,
+                phase_display: format!("{phase:?}"),
+                iteration: None,
+                max_iterations: 5,
+                failure_reason: None,
+            });
+        }
+    }
+
+    /// Update model status based on chat result and save cache.
+    fn update_model_status(&mut self, result: Result<(), &RunnerError>) {
+        if let Some(model_name) = &self.last_chat_model {
+            if let Some(status) = self.models.iter_mut().find(|m| &m.name == model_name) {
+                status.update_from_result(result);
+                self.save_models_cache();
+            }
+        }
+    }
+
+    /// Get the `.ralf` directory path for the current working directory.
+    fn ralf_dir() -> std::path::PathBuf {
+        std::env::current_dir()
+            .unwrap_or_else(|_| std::path::PathBuf::from("."))
+            .join(".ralf")
+    }
+
+    /// Load cached models or initialize fresh with probing state.
+    ///
+    /// Returns `(models, probe_complete)` tuple.
+    /// Uses cache if `models.json` exists and is less than 5 minutes old.
+    fn load_or_init_models(ralf_dir: &std::path::Path) -> (Vec<ModelStatus>, bool) {
+        use std::time::{Duration, SystemTime};
+
+        let cache_path = ralf_dir.join("models.json");
+        let cache_max_age = Duration::from_secs(300); // 5 minutes
+
+        // Check if cache exists and is recent
+        if let Ok(metadata) = std::fs::metadata(&cache_path) {
+            if let Ok(modified) = metadata.modified() {
+                if let Ok(age) = SystemTime::now().duration_since(modified) {
+                    if age < cache_max_age {
+                        // Try to load cache
+                        if let Ok(models) = crate::models::load_status_cache(ralf_dir) {
+                            // Only use if all known models are present
+                            if models.len() == KNOWN_MODELS.len() {
+                                return (models, true);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fall back to fresh probing
+        let models: Vec<ModelStatus> = KNOWN_MODELS
+            .iter()
+            .map(|name| ModelStatus::probing(name))
+            .collect();
+        (models, false)
     }
 
     /// Execute a parsed slash command.
@@ -904,6 +1127,14 @@ impl ShellApp {
     pub fn update_models(&mut self, models: Vec<ModelStatus>) {
         self.models = models;
         self.probe_complete = true;
+        self.save_models_cache();
+    }
+
+    /// Save current model status to cache.
+    fn save_models_cache(&self) {
+        let ralf_dir = Self::ralf_dir();
+        // Ignore errors - cache is optional
+        let _ = crate::models::save_status_cache(&self.models, &ralf_dir);
     }
 
     /// Start probing models and update them as results arrive.
@@ -1161,12 +1392,16 @@ pub fn run_shell<B: Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
                     pending_probes = pending_probes.saturating_sub(1);
                 }
 
-                // If all probes complete, drop the receiver
+                // If all probes complete, drop the receiver and save cache
                 if pending_probes == 0 {
                     app.probe_complete = true;
+                    app.save_models_cache();
                     probe_rx = None;
                 }
             }
+
+            // Check for chat responses (non-blocking)
+            app.poll_chat_response();
 
             // Clear expired toasts
             app.clear_expired_toast();
@@ -1187,6 +1422,8 @@ pub fn run_shell<B: Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
                     &mut app.timeline_bounds,
                     app.toast.as_ref(),
                     app.current_thread.as_ref(),
+                    app.chat_loading,
+                    app.last_chat_model.as_deref(),
                 );
 
                 // Render overlays on top
@@ -1278,7 +1515,7 @@ mod tests {
     fn test_shell_app_defaults() {
         let app = ShellApp::new();
         assert_eq!(app.screen_mode, ScreenMode::Split);
-        assert_eq!(app.focused_pane, FocusedPane::Timeline);
+        assert_eq!(app.focused_pane, FocusedPane::Input); // Input focused by default
         assert!(!app.should_quit);
         assert!(!app.probe_complete);
         assert!(app.show_models_panel);
@@ -1289,17 +1526,17 @@ mod tests {
     fn test_focus_cycling_in_split_mode() {
         let mut app = ShellApp::new();
         assert_eq!(app.screen_mode, ScreenMode::Split);
+        assert_eq!(app.focused_pane, FocusedPane::Input); // Starts at Input
+
+        // Tab cycles through Input → Timeline → Context → Input
+        app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(app.focused_pane, FocusedPane::Timeline);
 
-        // Tab cycles through Timeline → Context → Input → Timeline
         app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(app.focused_pane, FocusedPane::Context);
 
         app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(app.focused_pane, FocusedPane::Input);
-
-        app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-        assert_eq!(app.focused_pane, FocusedPane::Timeline);
     }
 
     #[test]
@@ -1586,5 +1823,239 @@ mod tests {
         // Tab starts autocomplete selection
         app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert!(app.autocomplete_index.is_some());
+    }
+
+    #[test]
+    fn test_get_available_model_none_when_no_ready() {
+        let app = ShellApp::new();
+        // All models start in Probing state
+        assert!(app.get_available_model().is_none());
+    }
+
+    #[test]
+    fn test_get_available_model_returns_config_when_ready() {
+        let mut app = ShellApp::new();
+        // Set first model to ready
+        app.models[0].state = crate::models::ModelState::Ready;
+
+        let config = app.get_available_model();
+        assert!(config.is_some());
+        assert_eq!(config.unwrap().name, app.models[0].name);
+    }
+
+    #[test]
+    fn test_chat_loading_blocks_send() {
+        let mut app = ShellApp::new();
+        app.models[0].state = crate::models::ModelState::Ready;
+        app.chat_loading = true;
+
+        // Trying to send while loading should show toast
+        app.send_chat_message("test");
+
+        // Should have a toast about waiting
+        assert!(app.toast.is_some());
+        assert!(app.toast.as_ref().unwrap().message.contains("Waiting"));
+    }
+
+    #[test]
+    fn test_send_chat_requires_ready_model() {
+        let mut app = ShellApp::new();
+        // All models in Probing state
+
+        app.send_chat_message("test");
+
+        // Should have toast about no model
+        assert!(app.toast.is_some());
+        assert!(app.toast.as_ref().unwrap().message.contains("No model"));
+    }
+
+    #[test]
+    fn test_chat_loading_state_default() {
+        let app = ShellApp::new();
+        assert!(!app.chat_loading);
+        assert!(app.chat_thread.is_none());
+        assert!(app.last_chat_model.is_none());
+    }
+
+    /// Test that send_chat_message actually spawns an async task.
+    ///
+    /// This requires a tokio runtime - if it panics, the runtime integration is broken.
+    #[tokio::test]
+    async fn test_send_chat_spawns_task() {
+        let mut app = ShellApp::new();
+        app.models[0].state = crate::models::ModelState::Ready;
+
+        // This should spawn a tokio task without panicking
+        app.send_chat_message("test message");
+
+        // Verify chat state was updated
+        assert!(app.chat_loading);
+        assert!(app.chat_thread.is_some());
+        assert!(app.chat_rx.is_some());
+        assert!(app.last_chat_model.is_some());
+
+        // User message should be in timeline
+        assert!(app.timeline.events().iter().any(|e| {
+            matches!(&e.kind, EventKind::Spec(spec) if spec.is_user && spec.content.contains("test message"))
+        }));
+    }
+
+    // ========================================================================
+    // Integration Tests - Full Event Sequences
+    // ========================================================================
+
+    /// Test full input submission flow: type → enter → chat initiated
+    #[tokio::test]
+    async fn test_integration_type_and_submit() {
+        let mut app = ShellApp::new();
+        app.models[0].state = crate::models::ModelState::Ready;
+
+        // Type "hello" character by character
+        for c in "hello".chars() {
+            app.handle_key_event(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        assert_eq!(app.input.content(), "hello");
+
+        // Press Enter to submit
+        app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        // Input should be cleared
+        assert!(app.input.is_empty());
+        // Chat should be loading
+        assert!(app.chat_loading);
+        // User message in timeline
+        assert!(app.timeline.events().iter().any(|e| {
+            matches!(&e.kind, EventKind::Spec(spec) if spec.content == "hello")
+        }));
+    }
+
+    /// Test that input is blocked while chat is loading
+    #[tokio::test]
+    async fn test_integration_input_blocked_while_loading() {
+        let mut app = ShellApp::new();
+        app.models[0].state = crate::models::ModelState::Ready;
+
+        // Send first message
+        app.send_chat_message("first");
+        assert!(app.chat_loading);
+        let initial_timeline_len = app.timeline.events().len();
+
+        // Try to send another message while loading
+        app.send_chat_message("second");
+
+        // Should have toast about waiting
+        assert!(app.toast.is_some());
+        assert!(app.toast.as_ref().unwrap().message.contains("Waiting"));
+        // Timeline should NOT have second message
+        assert_eq!(app.timeline.events().len(), initial_timeline_len);
+    }
+
+    /// Test focus cycling doesn't interfere with chat state
+    #[tokio::test]
+    async fn test_integration_focus_cycle_during_chat() {
+        let mut app = ShellApp::new();
+        app.models[0].state = crate::models::ModelState::Ready;
+
+        // Start a chat
+        app.send_chat_message("test");
+        assert!(app.chat_loading);
+
+        // Cycle focus with Tab
+        let initial_focus = app.focused_pane;
+        app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_ne!(app.focused_pane, initial_focus);
+
+        // Chat state should be preserved
+        assert!(app.chat_loading);
+        assert!(app.chat_thread.is_some());
+    }
+
+    /// Test escape clears input but doesn't affect chat state
+    #[tokio::test]
+    async fn test_integration_escape_during_chat() {
+        let mut app = ShellApp::new();
+        app.models[0].state = crate::models::ModelState::Ready;
+
+        // Start a chat
+        app.send_chat_message("test");
+        assert!(app.chat_loading);
+
+        // Type something new
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert_eq!(app.input.content(), "x");
+
+        // Escape clears input
+        app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.input.is_empty());
+
+        // Chat state preserved
+        assert!(app.chat_loading);
+        assert!(!app.should_quit);
+    }
+
+    /// Test slash command during chat loading
+    #[test]
+    fn test_integration_slash_command_during_loading() {
+        let mut app = ShellApp::new();
+        app.chat_loading = true;
+
+        // Type /help
+        for c in "/help".chars() {
+            app.handle_key_event(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        // Help should still work during loading
+        assert!(app.show_help);
+        // Chat loading preserved
+        assert!(app.chat_loading);
+    }
+
+    /// Test thread creation and models panel hiding
+    #[tokio::test]
+    async fn test_integration_thread_hides_models_panel() {
+        let mut app = ShellApp::new();
+        app.models[0].state = crate::models::ModelState::Ready;
+        assert!(app.show_models_panel); // Initially visible
+
+        // Send message creates thread
+        app.send_chat_message("hello");
+
+        // Models panel should be hidden when thread is active
+        assert!(!app.show_models_panel);
+        assert!(app.chat_thread.is_some());
+    }
+
+    /// Test poll_chat_response with no active chat
+    #[test]
+    fn test_integration_poll_without_chat() {
+        let mut app = ShellApp::new();
+
+        // Polling without active chat should not panic
+        app.poll_chat_response();
+
+        // State unchanged
+        assert!(!app.chat_loading);
+        assert!(app.chat_thread.is_none());
+    }
+
+    /// Test multiple messages build conversation
+    #[tokio::test]
+    async fn test_integration_conversation_builds() {
+        let mut app = ShellApp::new();
+        app.models[0].state = crate::models::ModelState::Ready;
+
+        // First message
+        app.send_chat_message("hello");
+        let thread = app.chat_thread.as_ref().unwrap();
+        assert_eq!(thread.messages.len(), 1);
+
+        // Simulate response received (clear loading state)
+        app.chat_loading = false;
+
+        // Second message
+        app.send_chat_message("how are you");
+        let thread = app.chat_thread.as_ref().unwrap();
+        assert_eq!(thread.messages.len(), 2);
     }
 }
