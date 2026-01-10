@@ -144,6 +144,45 @@ cargo test -p ralf-tui -- --nocapture
 cargo insta review
 ```
 
+## Terminal Restoration
+
+TUI applications modify terminal state (raw mode, alternate screen). If the app crashes, the terminal must be restored to prevent the user from seeing garbled output.
+
+### Panic Hook
+
+We install a panic hook that restores the terminal before printing the panic message:
+
+```rust
+fn restore_terminal() {
+    let _ = disable_raw_mode();
+    let _ = execute!(stdout(), DisableMouseCapture, LeaveAlternateScreen, ShowCursor);
+}
+
+fn install_panic_hook() {
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        restore_terminal();
+        original_hook(panic_info);
+    }));
+}
+```
+
+This is called at the start of `run_shell_tui()` and `run_tui()`.
+
+### RAII Guard
+
+For normal exits, we use an RAII guard that calls `restore_terminal()` on drop:
+
+```rust
+struct TerminalGuard;
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        restore_terminal();
+    }
+}
+```
+
 ## Common Pitfalls
 
 ### 1. Missing Tokio Runtime
