@@ -15,8 +15,9 @@ git checkout -b feat/<feature-name>
   - **Deliverables**: Files, types, functions
   - **Acceptance Criteria**: Testable checklist
   - **Non-Goals**: What's explicitly out of scope
-- Get external reviews (Gemini, Codex)
-- Iterate until spec is solid
+- Get external reviews (Gemini, Codex) - run headlessly via Bash
+- **Human review**: Walk through spec with user before implementation
+- Iterate until spec is solid and user approves
 
 ### 3. Implementation Loop
 - Implement according to spec

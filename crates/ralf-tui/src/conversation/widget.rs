@@ -46,6 +46,8 @@ pub struct ConversationPane<'a> {
     phase: Option<PhaseKind>,
     theme: &'a Theme,
     focused: bool,
+    /// Whether the canvas is showing spec content.
+    canvas_shows_spec: bool,
 }
 
 impl<'a> ConversationPane<'a> {
@@ -61,6 +63,7 @@ impl<'a> ConversationPane<'a> {
             phase: None,
             theme,
             focused: false,
+            canvas_shows_spec: false,
         }
     }
 
@@ -72,6 +75,7 @@ impl<'a> ConversationPane<'a> {
             phase: None,
             theme,
             focused: false,
+            canvas_shows_spec: false,
         }
     }
 
@@ -86,6 +90,15 @@ impl<'a> ConversationPane<'a> {
     #[must_use]
     pub fn focused(mut self, focused: bool) -> Self {
         self.focused = focused;
+        self
+    }
+
+    /// Set whether the canvas is showing spec content.
+    ///
+    /// When true, assistant spec events will be auto-collapsed in the timeline.
+    #[must_use]
+    pub fn canvas_shows_spec(mut self, shows_spec: bool) -> Self {
+        self.canvas_shows_spec = shows_spec;
         self
     }
 
@@ -233,7 +246,8 @@ impl Widget for ConversationPane<'_> {
         if self.input.is_none() {
             let timeline_widget = TimelineWidget::new(self.timeline, self.theme)
                 .with_border(false)
-                .focused(self.focused);
+                .focused(self.focused)
+                .canvas_shows_spec(self.canvas_shows_spec);
             timeline_widget.render(inner, buf);
             return;
         }
@@ -259,7 +273,8 @@ impl Widget for ConversationPane<'_> {
         // Render timeline (without its own border)
         let timeline_widget = TimelineWidget::new(self.timeline, self.theme)
             .with_border(false)
-            .focused(self.focused);
+            .focused(self.focused)
+            .canvas_shows_spec(self.canvas_shows_spec);
         timeline_widget.render(timeline_area, buf);
 
         // Render divider

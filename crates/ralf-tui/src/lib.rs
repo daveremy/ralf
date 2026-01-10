@@ -26,6 +26,7 @@ mod screens;
 pub mod shell;
 #[cfg(test)]
 pub mod test_utils;
+pub mod text;
 pub mod theme;
 pub mod thread_state;
 pub mod timeline;
@@ -44,6 +45,7 @@ pub use conversation::{input_placeholder, ConversationPane};
 pub use layout::{FocusedPane, ScreenMode};
 pub use models::{ModelState, ModelStatus, ModelsSummary};
 pub use shell::{run_shell, ShellApp, UiConfig};
+pub use text::{render_markdown, MarkdownStyles};
 pub use theme::{BorderSet, IconMode, IconSet, Theme};
 pub use thread_state::ThreadDisplay;
 pub use timeline::{
@@ -54,7 +56,10 @@ pub use ui::widgets::TextInputState;
 
 use crossterm::{
     cursor::Show as ShowCursor,
-    event::{DisableMouseCapture, EnableMouseCapture},
+    event::{
+        DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -75,6 +80,8 @@ impl Drop for TerminalGuard {
 ///
 /// Called by `TerminalGuard::drop` and panic hook to ensure terminal is usable.
 fn restore_terminal() {
+    // Pop keyboard enhancement (may fail on unsupported terminals, that's ok)
+    let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
     let _ = disable_raw_mode();
     let _ = execute!(stdout(), DisableMouseCapture, LeaveAlternateScreen, ShowCursor);
 }
@@ -140,6 +147,11 @@ pub fn run_shell_tui() -> Result<(), Box<dyn std::error::Error>> {
     // Install panic hook first so terminal is restored on panic
     install_panic_hook();
 
+    // Detect keyboard enhancement support BEFORE entering raw mode
+    // (the check can conflict with event reading if done after)
+    let keyboard_enhanced =
+        crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
+
     // Create tokio runtime for async chat operations
     let rt = tokio::runtime::Runtime::new()?;
     let _guard_rt = rt.enter(); // Keep runtime active for tokio::spawn
@@ -148,13 +160,22 @@ pub fn run_shell_tui() -> Result<(), Box<dyn std::error::Error>> {
     enable_raw_mode()?;
     let _guard = TerminalGuard;
 
+    // Enable keyboard enhancement for proper Shift+Enter detection.
+    // Only use DISAMBIGUATE_ESCAPE_CODES - REPORT_EVENT_TYPES causes double input
+    // by reporting both press and release events.
+    // Some terminals (legacy Windows) don't support this; ignore errors.
+    let _ = execute!(
+        stdout(),
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+    );
+
     let mut stdout = stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Run the shell
-    shell::run_shell(&mut terminal)?;
+    // Run the shell with keyboard enhancement info
+    shell::run_shell(&mut terminal, keyboard_enhanced)?;
 
     // Restore cursor before guard drops
     terminal.show_cursor()?;
@@ -326,8 +347,11 @@ fn handle_spec_studio_key(
 ) -> bool {
     use crossterm::event::{KeyCode, KeyModifiers};
 
-    // Handle Ctrl+Enter to insert newline
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Enter {
+    // Handle Ctrl+Enter or Shift+Enter to insert newline
+    if (key.modifiers.contains(KeyModifiers::CONTROL)
+        || key.modifiers.contains(KeyModifiers::SHIFT))
+        && key.code == KeyCode::Enter
+    {
         app.input_state.insert('\n');
         return true;
     }
@@ -615,6 +639,9 @@ mod snapshot_tests {
                     None,  // loading_model
                     None,  // spec_content
                     0,     // spec_scroll
+                    false, // keyboard_enhanced
+                    40,    // split_ratio
+                    true,  // show_canvas
                 );
             })
             .expect("Failed to draw");

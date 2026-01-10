@@ -36,7 +36,7 @@ pub const MIN_WIDTH: u16 = 40;
 pub const MIN_HEIGHT: u16 = 12;
 
 /// Render the main shell layout.
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
 pub fn render_shell(
     frame: &mut Frame<'_>,
     screen_mode: ScreenMode,
@@ -55,6 +55,9 @@ pub fn render_shell(
     loading_model: Option<&str>,
     spec_content: Option<&str>,
     spec_scroll: u16,
+    keyboard_enhanced: bool,
+    split_ratio: u16,
+    show_canvas: bool,
 ) {
     let area = frame.area();
 
@@ -64,14 +67,20 @@ pub fn render_shell(
         return;
     }
 
+    // Calculate dynamic input bar height based on content
+    // Minimum 3 (1 line + 2 for border), maximum 10 (8 lines + 2 for border)
+    let input_lines = input.line_count();
+    #[allow(clippy::cast_possible_truncation)]
+    let input_height = (input_lines as u16 + 2).clamp(3, 10); // Safe: clamped to 3-10
+
     // Divide into: StatusBar | MainArea | InputBar | FooterHints
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // Status bar
-            Constraint::Min(0),    // Main area (expands)
-            Constraint::Length(3), // Input bar (always visible)
-            Constraint::Length(1), // Footer hints
+            Constraint::Length(1),            // Status bar
+            Constraint::Min(0),               // Main area (expands)
+            Constraint::Length(input_height), // Input bar (dynamic height)
+            Constraint::Length(1),            // Footer hints
         ])
         .split(area);
 
@@ -99,6 +108,8 @@ pub fn render_shell(
         phase,
         spec_content,
         spec_scroll,
+        split_ratio,
+        show_canvas,
     );
 
     // Full-width input bar (always visible)
@@ -108,7 +119,7 @@ pub fn render_shell(
     frame.render_widget(input_bar, chunks[2]);
 
     // Footer with status bar format: Mode │ Focus │ Phase    [pane-specific hints]
-    let hints = FooterHints::pane_hints(focused_pane, show_models_panel);
+    let hints = FooterHints::pane_hints(focused_pane, show_models_panel, keyboard_enhanced);
     let footer = FooterHints::new(&hints, theme)
         .screen_mode(screen_mode)
         .focused_pane(focused_pane)
@@ -170,13 +181,37 @@ fn render_main_area(
     phase: Option<ralf_engine::thread::PhaseKind>,
     spec_content: Option<&str>,
     spec_scroll: u16,
+    split_ratio: u16,
+    show_canvas: bool,
 ) {
+    // Determine if canvas is showing spec (used to auto-collapse spec events in timeline)
+    let canvas_shows_spec = show_canvas && spec_content.is_some();
+
+    // If canvas is collapsed/hidden, show timeline full width regardless of screen mode
+    if !show_canvas && screen_mode == ScreenMode::Split {
+        render_timeline_pane(
+            frame,
+            area,
+            focused_pane == FocusedPane::Timeline,
+            theme,
+            timeline,
+            timeline_bounds,
+            false, // Canvas not visible
+        );
+        return;
+    }
+
     match screen_mode {
         ScreenMode::Split => {
-            // 40% Timeline | 60% Canvas
+            // Use configurable split ratio
+            let timeline_pct = split_ratio;
+            let canvas_pct = 100 - split_ratio;
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+                .constraints([
+                    Constraint::Percentage(timeline_pct),
+                    Constraint::Percentage(canvas_pct),
+                ])
                 .split(area);
 
             render_timeline_pane(
@@ -186,6 +221,7 @@ fn render_main_area(
                 theme,
                 timeline,
                 timeline_bounds,
+                canvas_shows_spec,
             );
             render_context_pane(
                 frame,
@@ -210,6 +246,7 @@ fn render_main_area(
                 theme,
                 timeline,
                 timeline_bounds,
+                false, // Canvas not visible in focus mode
             );
         }
         ScreenMode::ContextFocus => {
@@ -239,6 +276,7 @@ fn render_timeline_pane(
     theme: &Theme,
     timeline: &TimelineState,
     timeline_bounds: &mut TimelinePaneBounds,
+    canvas_shows_spec: bool,
 ) {
     // Calculate inner area (accounting for 1-pixel border on all sides)
     // This is used for mouse coordinate translation
@@ -247,7 +285,9 @@ fn render_timeline_pane(
     timeline_bounds.inner_width = area.width.saturating_sub(2);
     timeline_bounds.inner_height = area.height.saturating_sub(2);
 
-    let widget = ConversationPane::from_timeline(timeline, theme).focused(focused);
+    let widget = ConversationPane::from_timeline(timeline, theme)
+        .focused(focused)
+        .canvas_shows_spec(canvas_shows_spec);
     frame.render_widget(widget, area);
 }
 

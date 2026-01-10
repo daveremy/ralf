@@ -98,23 +98,21 @@ impl StatusBarContent {
     #[must_use]
     pub fn next_action_hint(phase: PhaseKind) -> String {
         match phase {
-            PhaseKind::Drafting => "Describe your task",
-            PhaseKind::Assessing => "Review AI feedback",
-            PhaseKind::Finalized => "Press [r] to run",
-            PhaseKind::Preflight => "Checking prerequisites...",
-            PhaseKind::PreflightFailed => "Fix issues to continue",
-            PhaseKind::Configuring => "Configure and start",
-            PhaseKind::Running => "Loop in progress...",
-            PhaseKind::Verifying => "Checking criteria...",
-            PhaseKind::Paused => "Resume or reconfigure",
-            PhaseKind::Stuck => "Choose next action",
-            PhaseKind::Implemented => "Review changes",
-            PhaseKind::Polishing => "Add docs/tests",
-            PhaseKind::PendingReview => "Review the diff",
-            PhaseKind::Approved => "Ready to commit",
-            PhaseKind::ReadyToCommit => "Commit when ready",
+            PhaseKind::Drafting => "/accept when ready",
+            PhaseKind::Assessing => "/approve or /edit",
+            PhaseKind::Finalized | PhaseKind::Configuring => "/run to start",
+            PhaseKind::Preflight => "Checking...",
+            PhaseKind::PreflightFailed => "Fix issues",
+            PhaseKind::Running => "Running...",
+            PhaseKind::Verifying => "Verifying...",
+            PhaseKind::Paused => "/resume or /configure",
+            PhaseKind::Stuck => "/edit or /configure",
+            PhaseKind::Implemented => "/review",
+            PhaseKind::Polishing => "/done when ready",
+            PhaseKind::PendingReview => "/approve or /reject",
+            PhaseKind::Approved | PhaseKind::ReadyToCommit => "/commit",
             PhaseKind::Done => "Complete!",
-            PhaseKind::Abandoned => "Thread abandoned",
+            PhaseKind::Abandoned => "Abandoned",
         }
         .into()
     }
@@ -311,11 +309,11 @@ mod tests {
         // Test a few key phases
         assert_eq!(
             StatusBarContent::next_action_hint(PhaseKind::Drafting),
-            "Describe your task"
+            "/accept when ready"
         );
         assert_eq!(
             StatusBarContent::next_action_hint(PhaseKind::Running),
-            "Loop in progress..."
+            "Running..."
         );
         assert_eq!(
             StatusBarContent::next_action_hint(PhaseKind::Done),
@@ -323,7 +321,7 @@ mod tests {
         );
         assert_eq!(
             StatusBarContent::next_action_hint(PhaseKind::Abandoned),
-            "Thread abandoned"
+            "Abandoned"
         );
     }
 }

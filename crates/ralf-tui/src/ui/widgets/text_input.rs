@@ -168,6 +168,16 @@ impl TextInputState {
         self.content.is_empty()
     }
 
+    /// Count the number of lines in the content.
+    /// Returns at least 1 (empty content counts as 1 line).
+    pub fn line_count(&self) -> usize {
+        if self.content.is_empty() {
+            1
+        } else {
+            self.content.chars().filter(|&c| c == '\n').count() + 1
+        }
+    }
+
     /// Clear the content.
     pub fn clear(&mut self) {
         self.content.clear();
