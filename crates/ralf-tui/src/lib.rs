@@ -613,6 +613,7 @@ mod snapshot_tests {
                     None,  // thread (no thread loaded)
                     false, // chat_loading
                     None,  // loading_model
+                    None,  // spec_content
                 );
             })
             .expect("Failed to draw");

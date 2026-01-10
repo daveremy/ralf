@@ -608,6 +608,21 @@ impl ShellApp {
             }
         }
 
+        // Spec preview keybindings (when thread has draft)
+        if let Some(thread) = &self.chat_thread {
+            match key.code {
+                // y: copy spec content to clipboard
+                KeyCode::Char('y') if !has_ctrl_alt => {
+                    if thread.draft.is_empty() {
+                        self.show_toast("No spec content to copy");
+                        return None;
+                    }
+                    return Some(ShellAction::CopyToClipboard(thread.draft.clone()));
+                }
+                _ => {}
+            }
+        }
+
         None
     }
 
@@ -1424,6 +1439,7 @@ pub fn run_shell<B: Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
                     app.current_thread.as_ref(),
                     app.chat_loading,
                     app.last_chat_model.as_deref(),
+                    app.chat_thread.as_ref().map(|t| t.draft.as_str()),
                 );
 
                 // Render overlays on top

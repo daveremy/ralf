@@ -119,8 +119,8 @@ impl<'a> FooterHints<'a> {
                     ]
                 } else {
                     vec![
+                        KeyHint::new("y", "copy spec"),
                         KeyHint::new("Tab", "focus"),
-                        KeyHint::new("?", "help"),
                     ]
                 }
             }

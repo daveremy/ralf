@@ -19,7 +19,7 @@ use ratatui::{
 
 use super::screen_modes::{FocusedPane, ScreenMode};
 use crate::{
-    context::ContextView,
+    context::{ContextView, SpecPhase, SpecPreview},
     conversation::ConversationPane,
     models::ModelStatus,
     shell::{TimelinePaneBounds, Toast},
@@ -53,6 +53,7 @@ pub fn render_shell(
     thread: Option<&ThreadDisplay>,
     chat_loading: bool,
     loading_model: Option<&str>,
+    spec_content: Option<&str>,
 ) {
     let area = frame.area();
 
@@ -95,6 +96,7 @@ pub fn render_shell(
         timeline,
         timeline_bounds,
         phase,
+        spec_content,
     );
 
     // Full-width input bar (always visible)
@@ -164,6 +166,7 @@ fn render_main_area(
     timeline: &TimelineState,
     timeline_bounds: &mut TimelinePaneBounds,
     phase: Option<ralf_engine::thread::PhaseKind>,
+    spec_content: Option<&str>,
 ) {
     match screen_mode {
         ScreenMode::Split => {
@@ -191,6 +194,7 @@ fn render_main_area(
                 ascii_mode,
                 show_models_panel,
                 phase,
+                spec_content,
             );
         }
         ScreenMode::TimelineFocus => {
@@ -216,6 +220,7 @@ fn render_main_area(
                 ascii_mode,
                 show_models_panel,
                 phase,
+                spec_content,
             );
         }
     }
@@ -253,7 +258,10 @@ fn render_context_pane(
     ascii_mode: bool,
     show_models_panel: bool,
     phase: Option<ralf_engine::thread::PhaseKind>,
+    spec_content: Option<&str>,
 ) {
+    use ralf_engine::thread::PhaseKind;
+
     // Route to appropriate view based on phase
     let view = ContextView::from_phase(phase);
 
@@ -263,10 +271,51 @@ fn render_context_pane(
             .ascii_mode(ascii_mode)
             .focused(focused);
         frame.render_widget(models_panel, area);
+    } else if matches!(view, ContextView::SpecEditor) {
+        // Render SpecPreview for spec editing phases
+        let spec_phase = match phase {
+            Some(PhaseKind::Assessing) => SpecPhase::Assessing,
+            Some(PhaseKind::Finalized) => SpecPhase::Ready,
+            _ => SpecPhase::Drafting, // Default for Drafting and other phases
+        };
+
+        // Render spec preview inside a bordered pane
+        render_spec_pane(frame, area, focused, theme, borders, spec_content.unwrap_or(""), spec_phase);
     } else {
-        // Render placeholder for all other views (real implementations in M5-B.3/B.4)
+        // Render placeholder for all other views (real implementations in M5-B.4)
         render_context_placeholder(frame, view, area, focused, theme, borders);
     }
+}
+
+/// Render spec preview inside a bordered pane.
+fn render_spec_pane(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    focused: bool,
+    theme: &Theme,
+    borders: &BorderSet,
+    content: &str,
+    phase: SpecPhase,
+) {
+    // Create bordered pane
+    let (border_set, border_style) = if focused {
+        (borders.focused(), Style::default().fg(theme.border_focused))
+    } else {
+        (borders.normal(), Style::default().fg(theme.border))
+    };
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_set(border_set)
+        .border_style(border_style)
+        .title(Span::styled(" Spec ", Style::default().fg(theme.text)));
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Render spec preview inside
+    let preview = SpecPreview::new(content, phase, theme).focused(focused);
+    frame.render_widget(preview, inner);
 }
 
 /// Render placeholder content for context views.
