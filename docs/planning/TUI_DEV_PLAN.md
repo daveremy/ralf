@@ -516,6 +516,38 @@ Build the SpecPreview artifact view (right pane) and phase transitions.
 
 **Exit Criteria:** ✓ Right pane shows spec preview, markdown renders correctly, phase badge displays correctly. Spec copy (`y` key) works.
 
+##### M5-B.3c': Markdown Foundation
+**Spec:** `SPEC-m5b3c-prime-markdown.md`
+
+Upgrade markdown rendering to use `pulldown-cmark` and add markdown support to timeline/conversation pane.
+
+**Background:**
+M5-B.3c introduced a simple line-by-line markdown parser for SpecPreview. However, AI messages in the timeline render as plain text, showing literal `**bold**` and `# headers` instead of styled text. This hurts UX during testing and will be needed for M5-B.3d (run output with code blocks).
+
+Codex uses `pulldown-cmark` for robust markdown parsing. We should adopt the same approach and create a shared text rendering module.
+
+**Deliverables:**
+- Replace simple `context/markdown.rs` with `pulldown-cmark` based parser
+- Create shared `text/` module for markdown rendering
+- Add markdown rendering to ConversationPane for AI/assistant messages
+- Keep user messages as plain styled text (like Codex)
+- SpecPreview uses the new shared renderer
+
+**Architecture:**
+```
+crates/ralf-tui/src/
+├── text/
+│   ├── mod.rs
+│   ├── markdown.rs      # pulldown-cmark based renderer
+│   └── styles.rs        # MarkdownStyles struct
+├── context/
+│   └── spec_preview.rs  # Uses text::markdown
+├── conversation/
+│   └── widget.rs        # Uses text::markdown for AI messages
+```
+
+**Exit Criteria:** AI messages in timeline render with markdown styling (headers bold, code highlighted, lists formatted). SpecPreview continues to work. Single markdown implementation shared across components.
+
 ##### M5-B.3d: Run Artifact Views
 **Spec:** `SPEC-m5b3d-run-artifacts.md`
 
@@ -628,7 +660,8 @@ M5-B (Conversation & Artifacts)
   │   ├── M5-B.3a'' (Focus Model & Layout Rework) ✓
   │   ├── M5-B.3b (Chat Integration) ✓
   │   ├── M5-B.3c (Spec Artifact View) ✓
-  │   └── M5-B.3d (Run Artifact Views) ← NEXT
+  │   ├── M5-B.3c' (Markdown Foundation) ← NEXT
+  │   └── M5-B.3d (Run Artifact Views)
   ├── M5-B.4 (Advanced Artifact Views)
   └── M5-B.5 (Thread Management)
   │
@@ -645,7 +678,8 @@ Each major phase builds on the previous. No parallel development between major p
 - M5-B.3a' → M5-B.3a'': Focus model rework addresses UX issues from testing
 - M5-B.3a'' → M5-B.3b: Chat integration needs stable focus/input model
 - M5-B.3b → M5-B.3c: Spec artifact needs chat to produce content
-- M5-B.3c → M5-B.3d: Run artifacts follow same pattern
+- M5-B.3c → M5-B.3c': Markdown foundation improves UX and provides shared renderer
+- M5-B.3c' → M5-B.3d: Run artifacts need code block rendering from markdown foundation
 - M5-B.3 and M5-B.4 could potentially overlap once conversation layer is ready
 - M5-B.4 → M5-B.5: Thread management needs all views in place
 - M5-B.5 could start earlier for CLI-only features (ralf threads)
