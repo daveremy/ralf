@@ -3,9 +3,7 @@ source: crates/ralf-tui/src/lib.rs
 expression: result
 ---
 ● No Thread │ "Select a thread to start"
-┌ Timeline ────────────────────┐┏ Models ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-│                              │┃                                              ┃
-│                              │┃                                              ┃
+┌ Conversation ────────────────┐┏ Models ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
 │                              │┃                                              ┃
 │                              │┃                                              ┃
 │                              │┃                                              ┃
@@ -22,7 +20,9 @@ expression: result
 │                              │┃                                              ┃
 │                              │┃                                              ┃
 │                              │┃                                              ┃
+│──────────────────────────────│┃                                              ┃
+│> Start typing to create a thr│┃                                              ┃
 │                              │┃                                              ┃
 │                              │┃                                              ┃
 └──────────────────────────────┘┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-[n] New Thread │ [o] Open Thread │ [Tab] Focus │ [1/2/3] Modes │ [?] Help │ [q]
+[Enter] Send message │ [/] Commands │ [Esc] Clear/Quit │ [Tab] Focus │ [F1] Help

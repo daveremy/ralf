@@ -19,7 +19,12 @@ use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
     MouseButton, MouseEvent, MouseEventKind,
 };
-use ratatui::{backend::Backend, Terminal};
+use ratatui::{
+    backend::Backend,
+    buffer::Buffer,
+    layout::Rect,
+    Terminal,
+};
 
 use crate::layout::{render_shell, FocusedPane, ScreenMode, MIN_HEIGHT, MIN_WIDTH};
 use crate::models::ModelStatus;
@@ -29,6 +34,7 @@ use crate::timeline::{
     EventKind, ReviewEvent, ReviewResult, RunEvent, SpecEvent, SystemEvent, TimelineState,
     SCROLL_SPEED,
 };
+use crate::ui::widgets::TextInputState;
 use ralf_engine::discovery::{discover_models, probe_model_with_info, KNOWN_MODELS};
 
 /// Maximum time between clicks to count as double-click.
@@ -94,6 +100,7 @@ impl UiConfig {
 
 /// Main application state for the M5-A shell.
 #[derive(Debug)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct ShellApp {
     /// Current screen mode.
     pub screen_mode: ScreenMode,
@@ -127,6 +134,12 @@ pub struct ShellApp {
     pub toast: Option<Toast>,
     /// Current thread display state (None = no thread loaded).
     pub current_thread: Option<ThreadDisplay>,
+    /// Text input state for the conversation pane.
+    pub input: TextInputState,
+    /// Whether to show the help overlay.
+    pub show_help: bool,
+    /// Autocomplete state (selected index into completions).
+    pub autocomplete_index: Option<usize>,
 }
 
 impl Default for ShellApp {
@@ -169,6 +182,9 @@ impl ShellApp {
             last_click: None,
             toast: None,
             current_thread: None, // No thread loaded initially
+            input: TextInputState::new(),
+            show_help: false,
+            autocomplete_index: None,
         }
     }
 
@@ -193,6 +209,72 @@ impl ShellApp {
                 self.toast = None;
             }
         }
+    }
+
+    /// Check if autocomplete popup should be shown.
+    pub fn should_show_autocomplete(&self) -> bool {
+        let content = self.input.content();
+        content.starts_with('/') && !content.contains(' ')
+    }
+
+    /// Get current autocomplete completions.
+    pub fn get_completions(&self) -> Vec<&'static crate::commands::CommandInfo> {
+        use crate::commands::get_completions;
+        let phase = self.current_thread.as_ref().map(|t| t.phase_kind);
+        get_completions(self.input.content(), phase)
+    }
+
+    /// Select next autocomplete completion.
+    pub fn autocomplete_next(&mut self) {
+        let completions = self.get_completions();
+        if completions.is_empty() {
+            self.autocomplete_index = None;
+            return;
+        }
+
+        self.autocomplete_index = match self.autocomplete_index {
+            None => Some(0),
+            Some(i) => Some((i + 1) % completions.len()),
+        };
+    }
+
+    /// Select previous autocomplete completion.
+    pub fn autocomplete_prev(&mut self) {
+        let completions = self.get_completions();
+        if completions.is_empty() {
+            self.autocomplete_index = None;
+            return;
+        }
+
+        self.autocomplete_index = match self.autocomplete_index {
+            None | Some(0) => Some(completions.len().saturating_sub(1)),
+            Some(i) => Some(i - 1),
+        };
+    }
+
+    /// Accept the current autocomplete selection.
+    ///
+    /// Returns true if a completion was accepted.
+    pub fn autocomplete_accept(&mut self) -> bool {
+        let Some(index) = self.autocomplete_index else {
+            return false;
+        };
+
+        let completions = self.get_completions();
+        if let Some(cmd) = completions.get(index) {
+            // Replace input with the completed command
+            self.input.clear();
+            self.input.insert_str(&format!("/{}", cmd.name));
+            self.autocomplete_index = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Reset autocomplete state.
+    pub fn reset_autocomplete(&mut self) {
+        self.autocomplete_index = None;
     }
 
     /// Add sample events to timeline for testing.
@@ -276,33 +358,304 @@ impl ShellApp {
         }
     }
 
+    /// Handle key event for conversation input.
+    ///
+    /// Returns a `KeyResult` indicating how the key was handled.
+    ///
+    /// Input-first key handling strategy:
+    /// - ALL character keys go to input (no reserved keys block typing)
+    /// - Modifier keys (Ctrl+N) provide shortcuts for power users
+    /// - Slash commands are invoked by typing `/command`
+    /// - Tab navigates/accepts autocomplete
+    fn handle_conversation_key(&mut self, key: KeyEvent) -> KeyResult {
+        match key.code {
+            // Tab - autocomplete navigation/accept
+            KeyCode::Tab if self.should_show_autocomplete() => {
+                if self.autocomplete_index.is_some() {
+                    // Accept current selection
+                    self.autocomplete_accept();
+                } else {
+                    // Start autocomplete selection
+                    self.autocomplete_next();
+                }
+                KeyResult::Handled
+            }
+
+            // Text input - characters without ctrl/alt modifier go to input
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                self.input.insert(c);
+                self.reset_autocomplete(); // Reset on text change
+                KeyResult::Handled
+            }
+
+            // Shift+Enter inserts newline
+            KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+                self.input.insert('\n');
+                self.reset_autocomplete();
+                KeyResult::Handled
+            }
+
+            // Enter - accept autocomplete or submit input
+            KeyCode::Enter => {
+                // If autocomplete is active, accept the selection first
+                if self.autocomplete_index.is_some() && self.autocomplete_accept() {
+                    return KeyResult::Handled;
+                }
+                // Otherwise submit input
+                if let Some(action) = self.submit_input() {
+                    KeyResult::Action(action)
+                } else {
+                    KeyResult::Handled
+                }
+            }
+
+            // Backspace
+            KeyCode::Backspace => {
+                self.input.backspace();
+                self.reset_autocomplete();
+                KeyResult::Handled
+            }
+
+            // Delete
+            KeyCode::Delete => {
+                self.input.delete();
+                self.reset_autocomplete();
+                KeyResult::Handled
+            }
+
+            // Cursor movement
+            KeyCode::Left => {
+                self.input.move_left();
+                self.reset_autocomplete();
+                KeyResult::Handled
+            }
+            KeyCode::Right => {
+                self.input.move_right();
+                self.reset_autocomplete();
+                KeyResult::Handled
+            }
+            KeyCode::Home => {
+                self.input.move_home();
+                self.reset_autocomplete();
+                KeyResult::Handled
+            }
+            KeyCode::End => {
+                self.input.move_end();
+                self.reset_autocomplete();
+                KeyResult::Handled
+            }
+
+            // Up - autocomplete navigation or history
+            KeyCode::Up => {
+                if self.should_show_autocomplete() && !self.get_completions().is_empty() {
+                    self.autocomplete_prev();
+                    KeyResult::Handled
+                } else if self.input.cursor == 0 || self.input.is_empty() {
+                    self.input.history_prev();
+                    KeyResult::Handled
+                } else {
+                    KeyResult::NotHandled // Let timeline scroll handle it
+                }
+            }
+
+            // Down - autocomplete navigation or history
+            KeyCode::Down => {
+                if self.should_show_autocomplete() && !self.get_completions().is_empty() {
+                    self.autocomplete_next();
+                    KeyResult::Handled
+                } else if self.input.cursor == self.input.content.len() {
+                    self.input.history_next();
+                    KeyResult::Handled
+                } else {
+                    KeyResult::NotHandled // Let timeline scroll handle it
+                }
+            }
+
+            // Not handled by input
+            _ => KeyResult::NotHandled,
+        }
+    }
+
+    /// Escape: clear input (no longer quits - use /quit or /exit).
+    fn handle_escape(&mut self) {
+        self.input.clear();
+        self.reset_autocomplete();
+    }
+
+    /// Submit the current input.
+    ///
+    /// Handles slash commands, escaped slashes, and regular messages.
+    fn submit_input(&mut self) -> Option<ShellAction> {
+        use crate::commands::{is_command, is_escaped_slash, parse_command, unescape_slash};
+
+        let content = self.input.submit();
+        if content.trim().is_empty() {
+            return None;
+        }
+
+        // Check for escaped slash (// -> /)
+        if is_escaped_slash(&content) {
+            let unescaped = unescape_slash(&content);
+            self.timeline.push(EventKind::System(SystemEvent::info(
+                format!("[Message: {unescaped}]"),
+            )));
+            return None;
+        }
+
+        // Check for slash command
+        if is_command(&content) {
+            if let Some(cmd) = parse_command(&content) {
+                return self.execute_command(cmd);
+            }
+        }
+
+        // Regular message - placeholder for chat integration
+        self.timeline.push(EventKind::System(SystemEvent::info(
+            format!("[Input received: {} chars]", content.len()),
+        )));
+        None
+    }
+
+    /// Execute a parsed slash command.
+    fn execute_command(&mut self, cmd: crate::commands::Command) -> Option<ShellAction> {
+        use crate::commands::Command;
+
+        match cmd {
+            Command::Help => {
+                self.show_help = true;
+                None
+            }
+            Command::Quit => {
+                self.should_quit = true;
+                None
+            }
+            Command::Split => {
+                self.screen_mode = ScreenMode::Split;
+                None
+            }
+            Command::Focus => {
+                self.screen_mode = ScreenMode::TimelineFocus;
+                None
+            }
+            Command::Canvas => {
+                self.screen_mode = ScreenMode::ContextFocus;
+                None
+            }
+            Command::Refresh => {
+                if self.show_models_panel && self.probe_complete {
+                    Some(ShellAction::RefreshModels)
+                } else {
+                    None
+                }
+            }
+            Command::Clear => {
+                self.timeline.clear();
+                None
+            }
+            Command::Copy => self.selected_event_content().map(ShellAction::CopyToClipboard),
+            Command::Model(name) => {
+                // TODO: Implement model switching
+                if let Some(model_name) = name {
+                    self.show_toast(format!("Model switching not yet implemented: {model_name}"));
+                } else {
+                    self.show_toast("Usage: /model <name>");
+                }
+                None
+            }
+            Command::Search(query) => {
+                // TODO: Implement timeline search
+                if let Some(q) = query {
+                    self.show_toast(format!("Search not yet implemented: {q}"));
+                } else {
+                    self.show_toast("Usage: /search <query>");
+                }
+                None
+            }
+            Command::Editor => {
+                // TODO: Open in $EDITOR
+                self.show_toast("Editor integration not yet implemented");
+                None
+            }
+            // Phase-specific commands - stub implementations
+            Command::Approve | Command::Reject(_) | Command::Pause | Command::Resume
+            | Command::Cancel | Command::Finalize | Command::Assess => {
+                self.show_toast(format!("Phase command not yet implemented: /{cmd:?}"));
+                None
+            }
+            Command::Unknown(name) => {
+                self.show_toast(format!("Unknown command: /{name}"));
+                None
+            }
+        }
+    }
+
     /// Handle keyboard input.
+    ///
+    /// Uses the input-first model where all character keys go to input.
+    /// Global actions use modifier keybindings (Ctrl+N) or F-keys.
     pub fn handle_key_event(&mut self, key: KeyEvent) -> Option<ShellAction> {
-        // Timeline-specific keys when timeline is focused
+        // Help overlay: any key closes it
+        if self.show_help {
+            self.show_help = false;
+            return None;
+        }
+
+        // F1 - Show help overlay
+        if key.code == KeyCode::F(1) {
+            self.show_help = true;
+            return None;
+        }
+
+        // Escape clears input (use /quit or /exit to quit)
+        if key.code == KeyCode::Esc {
+            self.handle_escape();
+            return None;
+        }
+
+        // Focus trap: '/' from anywhere jumps to input and inserts '/'
+        if key.code == KeyCode::Char('/') && self.input.is_empty() {
+            self.focused_pane = FocusedPane::Timeline;
+            self.input.insert('/');
+            return None;
+        }
+
+        // Conversation pane keys when focused
         if self.timeline_focused() {
+            // Try conversation input handling first
+            match self.handle_conversation_key(key) {
+                KeyResult::Handled => return None,
+                KeyResult::Action(action) => return Some(action),
+                KeyResult::NotHandled => {}
+            }
+
+            // Timeline navigation (when input didn't handle the key)
+            // Only works with Alt modifier in input-first model
             let visible_count = self
                 .timeline
                 .events_per_page(self.timeline_bounds.inner_height as usize);
+
+            if key.modifiers.contains(KeyModifiers::ALT) {
+                match key.code {
+                    KeyCode::Char('j') => {
+                        self.timeline.select_next();
+                        self.timeline.ensure_selection_visible(visible_count);
+                        return None;
+                    }
+                    KeyCode::Char('k') => {
+                        self.timeline.select_prev();
+                        self.timeline.ensure_selection_visible(visible_count);
+                        return None;
+                    }
+                    _ => {}
+                }
+            }
+
+            // Page keys work without modifier
             match key.code {
-                // Navigation
-                KeyCode::Char('j') | KeyCode::Down => {
-                    self.timeline.select_next();
-                    self.timeline.ensure_selection_visible(visible_count);
-                    return None;
-                }
-                KeyCode::Char('k') | KeyCode::Up => {
-                    self.timeline.select_prev();
-                    self.timeline.ensure_selection_visible(visible_count);
-                    return None;
-                }
-                KeyCode::Char('g') | KeyCode::Home => {
-                    self.timeline.jump_to_start();
-                    return None;
-                }
-                KeyCode::Char('G') | KeyCode::End => {
-                    self.timeline.jump_to_end();
-                    return None;
-                }
                 KeyCode::PageUp => {
                     self.timeline.page_up(visible_count);
                     self.timeline.ensure_selection_visible(visible_count);
@@ -313,78 +666,58 @@ impl ShellApp {
                     self.timeline.ensure_selection_visible(visible_count);
                     return None;
                 }
-                // Toggle collapse
-                KeyCode::Enter => {
-                    self.timeline.toggle_collapse();
-                    return None;
-                }
-                // Copy selected event to clipboard (vim-style yank)
-                KeyCode::Char('y') => {
-                    if let Some(content) = self.selected_event_content() {
-                        return Some(ShellAction::CopyToClipboard(content));
-                    }
-                    return None;
-                }
-                // Copy with Ctrl+C
-                KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    if let Some(content) = self.selected_event_content() {
-                        return Some(ShellAction::CopyToClipboard(content));
-                    }
-                    return None;
-                }
-                _ => {} // Fall through to global handlers
+                _ => {}
             }
         }
 
-        match key.code {
-            // Screen modes - support both Ctrl+N and plain N, plus F-keys
-            KeyCode::Char('1') | KeyCode::F(1) => {
-                self.screen_mode = ScreenMode::Split;
-                None
-            }
-            KeyCode::Char('2') | KeyCode::F(2) => {
-                self.screen_mode = ScreenMode::TimelineFocus;
-                None
-            }
-            KeyCode::Char('3') | KeyCode::F(3) => {
-                self.screen_mode = ScreenMode::ContextFocus;
-                None
-            }
-
-            // Focus management - only effective in Split mode
-            KeyCode::Tab => {
-                if self.screen_mode == ScreenMode::Split {
-                    self.focused_pane = self.focused_pane.toggle();
+        // Global keybindings with Alt modifier (works better cross-platform)
+        if key.modifiers.contains(KeyModifiers::ALT) {
+            match key.code {
+                // Screen modes: Alt+1/2/3
+                KeyCode::Char('1') => {
+                    self.screen_mode = ScreenMode::Split;
+                    return None;
                 }
-                // In non-Split modes, Tab is a no-op
-                None
+                KeyCode::Char('2') => {
+                    self.screen_mode = ScreenMode::TimelineFocus;
+                    return None;
+                }
+                KeyCode::Char('3') => {
+                    self.screen_mode = ScreenMode::ContextFocus;
+                    return None;
+                }
+                _ => {}
             }
-
-            // Refresh models - only when models panel is visible and not already probing
-            KeyCode::Char('r') if self.show_models_panel && self.probe_complete => {
-                Some(ShellAction::RefreshModels)
-            }
-
-            // Help overlay - placeholder for M5-A, implemented in M5-C
-            // KeyCode::Char('?') => { /* TODO: Show help overlay */ }
-
-            // Quit
-            KeyCode::Char('q') | KeyCode::Esc => {
-                self.should_quit = true;
-                None
-            }
-
-            _ => None,
         }
+
+        // Global keybindings with Ctrl modifier
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                // Refresh: Ctrl+R
+                KeyCode::Char('r') if self.show_models_panel && self.probe_complete => {
+                    return Some(ShellAction::RefreshModels);
+                }
+                // Clear: Ctrl+L
+                KeyCode::Char('l') => {
+                    self.timeline.clear();
+                    return None;
+                }
+                // Note: Ctrl+C intentionally NOT mapped - reserved for terminal interrupt
+                _ => {}
+            }
+        }
+
+        // Tab - toggle focus in split mode
+        if key.code == KeyCode::Tab && self.screen_mode == ScreenMode::Split {
+            self.focused_pane = self.focused_pane.toggle();
+            return None;
+        }
+
+        None
     }
 
     /// Handle mouse input.
     pub fn handle_mouse_event(&mut self, mouse: MouseEvent) {
-        // Only handle mouse events when timeline is focused
-        if !self.timeline_focused() {
-            return;
-        }
-
         let bounds = &self.timeline_bounds;
 
         // Check if click is within timeline pane bounds
@@ -393,49 +726,66 @@ impl ShellApp {
             && mouse.row >= bounds.inner_y
             && mouse.row < bounds.inner_y + bounds.inner_height;
 
+        // Check if click is within context pane (in split mode)
+        // Context pane starts after timeline ends and goes to the right edge
+        let in_context = self.screen_mode == ScreenMode::Split
+            && mouse.column >= bounds.inner_x + bounds.inner_width
+            && mouse.row >= bounds.inner_y
+            && mouse.row < bounds.inner_y + bounds.inner_height;
+
         match mouse.kind {
             MouseEventKind::ScrollUp => {
-                if in_timeline {
+                // Only scroll when timeline is focused and click is in timeline
+                if self.timeline_focused() && in_timeline {
                     self.timeline.scroll_up(SCROLL_SPEED);
                 }
             }
             MouseEventKind::ScrollDown => {
-                if in_timeline {
+                // Only scroll when timeline is focused and click is in timeline
+                if self.timeline_focused() && in_timeline {
                     self.timeline.scroll_down(SCROLL_SPEED);
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {
-                if !in_timeline {
-                    return;
-                }
-
-                let now = Instant::now();
-
-                // Check for double-click
-                let is_double_click = self.last_click.is_some_and(|last| {
-                    now.duration_since(last.time) < DOUBLE_CLICK_THRESHOLD
-                        && mouse.row == last.row
-                        && mouse.column == last.column
-                });
-
-                // Convert to relative y coordinate within timeline inner area
-                let relative_y = (mouse.row - bounds.inner_y) as usize;
-
-                if let Some(idx) = self.timeline.y_to_event_index(relative_y) {
-                    self.timeline.select(idx);
-
-                    if is_double_click {
-                        self.timeline.toggle_collapse();
-                        self.last_click = None; // Reset after double-click
+                // Click-to-focus: clicking on a pane focuses it
+                if self.screen_mode == ScreenMode::Split {
+                    if in_timeline && self.focused_pane != FocusedPane::Timeline {
+                        self.focused_pane = FocusedPane::Timeline;
+                    } else if in_context && self.focused_pane != FocusedPane::Context {
+                        self.focused_pane = FocusedPane::Context;
                     }
                 }
 
-                if !is_double_click {
-                    self.last_click = Some(LastClick {
-                        time: now,
-                        row: mouse.row,
-                        column: mouse.column,
+                // Timeline selection only when clicking in timeline
+                if in_timeline && self.timeline_focused() {
+                    let now = Instant::now();
+
+                    // Check for double-click
+                    let is_double_click = self.last_click.is_some_and(|last| {
+                        now.duration_since(last.time) < DOUBLE_CLICK_THRESHOLD
+                            && mouse.row == last.row
+                            && mouse.column == last.column
                     });
+
+                    // Convert to relative y coordinate within timeline inner area
+                    let relative_y = (mouse.row - bounds.inner_y) as usize;
+
+                    if let Some(idx) = self.timeline.y_to_event_index(relative_y) {
+                        self.timeline.select(idx);
+
+                        if is_double_click {
+                            self.timeline.toggle_collapse();
+                            self.last_click = None; // Reset after double-click
+                        }
+                    }
+
+                    if !is_double_click {
+                        self.last_click = Some(LastClick {
+                            time: now,
+                            row: mouse.row,
+                            column: mouse.column,
+                        });
+                    }
                 }
             }
             _ => {}
@@ -480,6 +830,17 @@ pub enum ShellAction {
     CopyToClipboard(String),
 }
 
+/// Result of handling a key event in conversation input.
+#[derive(Debug)]
+enum KeyResult {
+    /// Key was not handled by the input.
+    NotHandled,
+    /// Key was handled, no further action needed.
+    Handled,
+    /// Key was handled and produced a shell action.
+    Action(ShellAction),
+}
+
 /// Result of a clipboard operation.
 #[derive(Debug, Clone)]
 pub enum ClipboardResult {
@@ -487,6 +848,156 @@ pub enum ClipboardResult {
     Success,
     /// Clipboard operation failed.
     Failed(String),
+}
+
+/// Render the help overlay.
+fn render_help_overlay(area: Rect, buf: &mut Buffer, theme: &Theme) {
+    use crate::commands::COMMANDS;
+    use crate::ui::centered_fixed;
+    use ratatui::style::Style;
+    use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
+
+    // Build help text from commands registry
+    // Format: /command [alias]  Description  (Keybinding)
+    let mut help_lines: Vec<String> = Vec::new();
+
+    help_lines.push("Commands".to_string());
+    help_lines.push(String::new());
+
+    for cmd in COMMANDS.iter().filter(|c| !c.phase_specific) {
+        // Build command with alias: "/quit [q]" or just "/help"
+        let cmd_str = if cmd.aliases.is_empty() {
+            format!("/{}", cmd.name)
+        } else {
+            format!("/{}  [{}]", cmd.name, cmd.aliases.join(", "))
+        };
+
+        // Pad command to align descriptions
+        let padded_cmd = format!("{cmd_str:<18}");
+
+        // Add keybinding at end if present
+        let line = if let Some(key) = cmd.keybinding {
+            format!("  {}  {}  ({})", padded_cmd, cmd.description, key)
+        } else {
+            format!("  {}  {}", padded_cmd, cmd.description)
+        };
+
+        help_lines.push(line);
+    }
+
+    help_lines.push(String::new());
+    help_lines.push("Keyboard Shortcuts".to_string());
+    help_lines.push(String::new());
+    help_lines.push("  Tab         Switch pane focus".to_string());
+    help_lines.push("  Alt+1/2/3   Switch screen mode".to_string());
+    help_lines.push("  Esc         Clear input".to_string());
+    help_lines.push("  Enter       Send message / execute".to_string());
+    help_lines.push(String::new());
+    help_lines.push("[Press any key to close]".to_string());
+
+    let help_text = help_lines.join("\n");
+
+    // Calculate overlay size - make it wider to fit content
+    let width = 60.min(area.width.saturating_sub(4));
+    let height = 28.min(area.height.saturating_sub(4));
+    let overlay_area = centered_fixed(width, height, area);
+
+    // Clear the area
+    Clear.render(overlay_area, buf);
+
+    // Render the help block
+    let block = Block::default()
+        .title(" Help ")
+        .title_style(Style::default().fg(theme.primary))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.primary))
+        .style(Style::default().bg(theme.surface));
+
+    let paragraph = Paragraph::new(help_text)
+        .block(block)
+        .wrap(Wrap { trim: false })
+        .style(Style::default().fg(theme.text).bg(theme.surface));
+
+    paragraph.render(overlay_area, buf);
+}
+
+/// Render the autocomplete popup for slash commands.
+pub fn render_autocomplete_popup(
+    area: Rect,
+    buf: &mut Buffer,
+    theme: &Theme,
+    completions: &[&crate::commands::CommandInfo],
+    selected_index: Option<usize>,
+) {
+    use ratatui::style::{Modifier, Style};
+    use ratatui::text::{Line, Span};
+    use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Widget};
+
+    if completions.is_empty() {
+        return;
+    }
+
+    // Calculate popup size and position
+    // Position above the input area (which is at the bottom of the conversation pane)
+    let max_items = 8.min(completions.len());
+    // Safe: max_items is capped at 8, so it fits in u16
+    #[allow(clippy::cast_possible_truncation)]
+    let popup_height = (max_items as u16) + 2; // +2 for borders
+    let popup_width = 45.min(area.width.saturating_sub(4));
+
+    // Position just above the input area:
+    // - Footer: 1 line
+    // - Input area: ~3-4 lines
+    // Total offset from bottom: popup_height + 5
+    let popup_y = area.height.saturating_sub(popup_height + 5);
+    let popup_x = 2; // Small left margin
+
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    // Clear the area
+    Clear.render(popup_area, buf);
+
+    // Build list items
+    let items: Vec<ListItem<'_>> = completions
+        .iter()
+        .enumerate()
+        .take(max_items)
+        .map(|(i, cmd)| {
+            let is_selected = selected_index == Some(i);
+            let style = if is_selected {
+                Style::default()
+                    .fg(theme.base)
+                    .bg(theme.primary)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.text)
+            };
+
+            let spans = vec![
+                Span::styled(format!("/{}", cmd.name), style),
+                Span::styled(
+                    format!("  {}", cmd.description),
+                    if is_selected {
+                        style
+                    } else {
+                        Style::default().fg(theme.subtext)
+                    },
+                ),
+            ];
+
+            ListItem::new(Line::from(spans))
+        })
+        .collect();
+
+    // Create the list widget
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.overlay))
+        .style(Style::default().bg(theme.surface));
+
+    let list = List::new(items).block(block);
+
+    list.render(popup_area, buf);
 }
 
 /// Probe all known models in parallel, returning results via a channel.
@@ -520,6 +1031,7 @@ fn probe_models_parallel(timeout: Duration) -> mpsc::Receiver<ModelStatus> {
 }
 
 /// Run the shell app main loop.
+#[allow(clippy::too_many_lines)]
 pub fn run_shell<B: Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
     let mut app = ShellApp::new();
 
@@ -569,10 +1081,34 @@ pub fn run_shell<B: Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
                     app.is_ascii_mode(),
                     app.show_models_panel,
                     &app.timeline,
+                    &app.input,
                     &mut app.timeline_bounds,
                     app.toast.as_ref(),
                     app.current_thread.as_ref(),
                 );
+
+                // Render overlays on top
+                let area = frame.area();
+                let buf = frame.buffer_mut();
+
+                // Autocomplete popup (when typing slash commands)
+                if app.should_show_autocomplete() {
+                    let completions = app.get_completions();
+                    if !completions.is_empty() {
+                        render_autocomplete_popup(
+                            area,
+                            buf,
+                            &app.theme,
+                            &completions,
+                            app.autocomplete_index,
+                        );
+                    }
+                }
+
+                // Help overlay (highest priority, renders on top)
+                if app.show_help {
+                    render_help_overlay(area, buf, &app.theme);
+                }
             })?;
 
             // Handle events (16ms poll = ~60fps)
@@ -678,38 +1214,53 @@ mod tests {
     }
 
     #[test]
-    fn test_screen_mode_switching() {
+    fn test_screen_mode_switching_with_alt() {
         let mut app = ShellApp::new();
         assert_eq!(app.screen_mode, ScreenMode::Split);
 
-        // Plain number keys work
-        app.handle_key_event(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        // Alt+1/2/3 switch modes (works cross-platform including Mac)
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::ALT));
         assert_eq!(app.screen_mode, ScreenMode::TimelineFocus);
 
-        app.handle_key_event(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::ALT));
         assert_eq!(app.screen_mode, ScreenMode::ContextFocus);
 
-        app.handle_key_event(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT));
         assert_eq!(app.screen_mode, ScreenMode::Split);
-
-        // F-keys also work
-        app.handle_key_event(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
-        assert_eq!(app.screen_mode, ScreenMode::TimelineFocus);
     }
 
     #[test]
-    fn test_quit() {
+    fn test_escape_clears_input() {
+        let mut app = ShellApp::new();
+        app.focused_pane = FocusedPane::Timeline;
+
+        // Type something
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
+        assert_eq!(app.input.content(), "test");
+
+        // Esc clears input
+        app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.input.is_empty());
+        assert!(!app.should_quit); // Does NOT quit
+    }
+
+    #[test]
+    fn test_escape_does_not_quit() {
+        // Esc never quits - must use /quit or /exit
         let mut app = ShellApp::new();
         assert!(!app.should_quit);
 
-        // 'q' quits
-        app.handle_key_event(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
-        assert!(app.should_quit);
+        // Esc on empty input does NOT quit
+        app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!app.should_quit);
 
-        // Esc also quits
-        let mut app2 = ShellApp::new();
-        app2.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert!(app2.should_quit);
+        // Multiple Esc presses still don't quit
+        app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!app.should_quit);
     }
 
     #[test]
@@ -753,8 +1304,8 @@ mod tests {
         app.show_models_panel = true;
         app.probe_complete = true;
 
-        // 'r' should trigger RefreshModels when models panel is visible and probe complete
-        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+        // Ctrl+R triggers RefreshModels (input-first model)
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
         assert_eq!(action, Some(ShellAction::RefreshModels));
     }
 
@@ -764,8 +1315,8 @@ mod tests {
         app.show_models_panel = false;
         app.probe_complete = true;
 
-        // 'r' should do nothing when models panel is not visible
-        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+        // Ctrl+R should do nothing when models panel is not visible
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
         assert_eq!(action, None);
     }
 
@@ -775,8 +1326,8 @@ mod tests {
         app.show_models_panel = true;
         app.probe_complete = false; // Still probing
 
-        // 'r' should do nothing while probing is in progress
-        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+        // Ctrl+R should do nothing while probing is in progress
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL));
         assert_eq!(action, None);
     }
 
@@ -795,5 +1346,110 @@ mod tests {
         // Unicode mode should return false
         app.ui_config.icons = IconMode::Unicode;
         assert!(!app.is_ascii_mode());
+    }
+
+    #[test]
+    fn test_input_first_all_chars_go_to_input() {
+        // Input-first model: ALL character keys (without Ctrl) go to input
+        let mut app = ShellApp::new();
+        app.focused_pane = FocusedPane::Timeline;
+
+        // Type any text - all goes to input
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
+        assert_eq!(app.input.content(), "hello");
+
+        // Even 'q' goes to input (no reserved keys in input-first model)
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+        assert_eq!(app.input.content(), "helloq");
+        assert!(!app.should_quit);
+
+        // Numbers also go to input
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE));
+        assert_eq!(app.input.content(), "helloq123");
+    }
+
+    #[test]
+    fn test_focus_trap_slash() {
+        // Input-first model: '/' from anywhere jumps to input
+        let mut app = ShellApp::new();
+        app.focused_pane = FocusedPane::Context;
+        assert!(app.input.is_empty());
+
+        // '/' jumps to input and inserts '/'
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        assert_eq!(app.input.content(), "/");
+    }
+
+    #[test]
+    fn test_f1_shows_help() {
+        let mut app = ShellApp::new();
+        assert!(!app.show_help);
+
+        // F1 shows help overlay
+        app.handle_key_event(KeyEvent::new(KeyCode::F(1), KeyModifiers::NONE));
+        assert!(app.show_help);
+
+        // Any key closes help
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert!(!app.show_help);
+    }
+
+    #[test]
+    fn test_slash_command_help() {
+        let mut app = ShellApp::new();
+        app.focused_pane = FocusedPane::Timeline;
+        assert!(!app.show_help);
+
+        // Type /help and submit
+        for c in "/help".chars() {
+            app.handle_key_event(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        assert_eq!(app.input.content(), "/help");
+
+        // Submit via Enter
+        app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        // Help overlay should be shown
+        assert!(app.show_help);
+        // Input should be cleared after submit
+        assert!(app.input.is_empty());
+    }
+
+    #[test]
+    fn test_slash_command_quit() {
+        let mut app = ShellApp::new();
+        app.focused_pane = FocusedPane::Timeline;
+
+        // Type /quit and submit
+        for c in "/quit".chars() {
+            app.handle_key_event(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn test_autocomplete_shows_for_slash() {
+        let mut app = ShellApp::new();
+        app.focused_pane = FocusedPane::Timeline;
+
+        // Type '/'
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        assert!(app.should_show_autocomplete());
+
+        // Get completions
+        let completions = app.get_completions();
+        assert!(!completions.is_empty());
+
+        // Tab starts autocomplete selection
+        app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert!(app.autocomplete_index.is_some());
     }
 }

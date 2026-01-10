@@ -26,7 +26,7 @@ ralf uses an opinionated, phase-driven workflow for multi-model autonomous codin
 │   ▸ [Review] Approved           │                               │
 │                                 │                               │
 ├─────────────────────────────────┴───────────────────────────────┤
-│ [Input/Action Bar]                              [Ctrl+P: commands]
+│ > Type your message...                           [/:commands]
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -35,7 +35,8 @@ ralf uses an opinionated, phase-driven workflow for multi-model autonomous codin
 - Timeline entries are **typed** ([Spec], [Run], [Review]) for filtering
 - Timeline entries show **model attribution** (which model did this)
 - Context pane adapts to phase; Timeline stays consistent
-- Command palette (Ctrl+P) for discoverability across all phases
+- Slash commands (`/help`) for discoverability across all phases
+- Input-first design: typing always goes to input area
 
 ---
 
@@ -245,68 +246,154 @@ The two-pane layout supports **focus modes** for different terminal sizes and ta
 
 ---
 
-## Command Palette
+## Input Model & Command System
 
-Ctrl+P opens command palette with consistent verbs across all phases:
+### Input-First Philosophy
+
+The conversation pane is the primary interaction point. All typing goes directly to the input area—no mode switching, no reserved keys that block text entry. This matches the mental model of chat-based AI assistants like Claude Code.
+
+**Core principle:** When users see a cursor, they can type anything.
+
+### Slash Commands
+
+Actions are invoked via slash commands, discoverable through `/help`:
 
 ```
 ┌─ Commands ──────────────────────────────────────┐
-│ > run        Start implementation loop          │
-│   pause      Pause current run                  │
-│   resume     Resume paused run                  │
-│   review     Go to review phase                 │
-│   commit     Prepare commit                     │
-│   config     Open configuration                 │
-│   thread     Switch/manage threads              │
-│   help       Show help for current phase        │
+│ /help, /?      Show this help               [F1]│
+│ /quit, /q      Exit ralf                   [Esc]│
+│ /split, /1     Split view mode          [Ctrl+1]│
+│ /focus, /2     Focus conversation       [Ctrl+2]│
+│ /canvas, /3    Focus canvas             [Ctrl+3]│
+│ /refresh       Refresh model status     [Ctrl+R]│
+│ /clear         Clear conversation       [Ctrl+L]│
+│ /model [name]  Switch active model              │
+│ /copy          Copy last response               │
+│ /editor        Open in $EDITOR                  │
+│                                                 │
+│ Phase commands (current: Reviewing):            │
+│ /approve       Approve the spec                 │
+│ /reject        Reject with feedback             │
 └─────────────────────────────────────────────────┘
 ```
 
-**Rationale:** Discoverability. "Input bar adapts to phase" can hide actions. Palette always works.
+### Layered Command Access
+
+Commands have multiple access paths for different user needs:
+
+| Action | Slash Command | Keybinding | User Type |
+|--------|---------------|------------|-----------|
+| Quit | `/quit`, `/q` | `Escape` | New users learn slash, power users use key |
+| Help | `/help`, `/?` | `F1` | Discoverable + muscle memory |
+| Screen modes | `/split`, `/focus`, `/canvas` | `Ctrl+1/2/3` | Both paths work |
+| Refresh | `/refresh` | `Ctrl+R` | Both paths work |
+| Clear | `/clear` | `Ctrl+L` | Both paths work |
+| Switch pane | — | `Tab` | Keybinding only (too frequent) |
+| Timeline scroll | — | `PageUp/Down`, `Alt+j/k` | Keybinding only |
+| Submit | — | `Enter` | Keybinding only |
+| Newline | — | `Shift+Enter` | Keybinding only |
+| Model switch | `/model [name]` | — | Slash only (needs argument) |
+| Phase: approve | `/approve` | — | Slash only (deliberate action) |
+
+**Rationale:**
+- New users discover via `/help`, use readable slash commands
+- Power users graduate to keybindings for speed
+- Everyone can choose their preferred interaction style
+- Slash commands are self-documenting; keybindings are fast
+
+### Command Discoverability
+
+1. **Typing `/` shows autocomplete** - Popup menu filters as you type
+2. **`/help` is context-aware** - Shows phase-specific commands at top
+3. **Footer hints** - Show most relevant commands for current state
+4. **Focus trap escape** - Pressing `/` from any pane jumps to input
+
+### Phase-Specific Commands
+
+Commands adapt to the current phase:
+
+| Phase | Available Commands |
+|-------|-------------------|
+| Drafting | `/finalize`, `/assess` |
+| Running | `/pause`, `/cancel` |
+| Paused | `/resume`, `/cancel` |
+| Stuck | `/revise`, `/reconfigure`, `/abandon` |
+| PendingReview | `/approve`, `/reject` |
+| ReadyToCommit | `/commit`, `/amend` |
+
+**Rationale:** Discoverability without clutter. Users see only what's relevant.
 
 ---
 
 ## Keyboard Reference
 
+### Navigation & Focus
+
 | Key | Action |
 |-----|--------|
-| Tab | Cycle focus between panes |
-| Ctrl+P | Command palette |
-| Ctrl+T | Thread picker |
-| Ctrl+M | Switch model |
-| Ctrl+G | Go to / navigate |
-| Ctrl+F | Filter timeline |
-| Ctrl+1/2/3 | Focus modes |
-| ? | Help overlay |
-| Ctrl+C | Pause (graceful stop) |
-| Ctrl+D | Cancel (abort immediately) |
-| Ctrl+Q | Quit |
-| d | Toggle diff waterfall (during Running) |
+| `Tab` | Cycle focus between panes |
+| `Shift+Tab` | Cycle focus (reverse) |
+| `PageUp/PageDown` | Scroll timeline |
+| `Alt+j/k` | Scroll timeline (vim-style) |
+| `Ctrl+G` | Go to / navigate |
 
-**Pause vs Cancel:** Ctrl+C is a graceful pause that lets the current operation finish and saves state. Ctrl+D is an immediate abort that discards in-progress work. This distinction matters during long-running iterations where users may want to stop without losing partial progress.
+### Screen Modes
 
-Phase-specific actions shown in status bar and context pane.
+| Key | Action | Slash Equivalent |
+|-----|--------|------------------|
+| `Ctrl+1` | Split view | `/split`, `/1` |
+| `Ctrl+2` | Focus conversation | `/focus`, `/2` |
+| `Ctrl+3` | Focus canvas | `/canvas`, `/3` |
+
+### Input
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Submit message |
+| `Shift+Enter` | Insert newline |
+| `/` | Start slash command |
+| `Escape` | Clear input / Cancel / Quit (cascade) |
+
+### Global Actions
+
+| Key | Action | Slash Equivalent |
+|-----|--------|------------------|
+| `F1` | Show help | `/help`, `/?` |
+| `Ctrl+R` | Refresh models | `/refresh` |
+| `Ctrl+L` | Clear conversation | `/clear` |
+| `Ctrl+C` | Pause (graceful stop) | `/pause` |
+| `Ctrl+D` | Cancel (abort immediately) | `/cancel` |
+
+**Escape Cascade:** Pressing `Escape` performs context-dependent action:
+1. If input has text → clear input
+2. If operation in progress → cancel operation
+3. Otherwise → quit ralf
+
+**Pause vs Cancel:** `Ctrl+C` is a graceful pause that lets the current operation finish and saves state. `Ctrl+D` is an immediate abort that discards in-progress work.
+
+Phase-specific actions are available via slash commands (see `/help`).
 
 ---
 
 ## Footer Keybinding Hints
 
-The bottom of the screen displays context-sensitive keybinding hints:
+The bottom of the screen displays context-sensitive hints:
 
 ```
-Drafting:      [Ctrl+Enter] Send │ [Ctrl+F] Finalize │ [?] Help │ [Ctrl+Q] Quit
-Running:       [Ctrl+C] Pause │ [Ctrl+D] Cancel │ [Tab] Focus │ [?] Help
-PendingReview: [a] Approve │ [r] Reject │ [d] View diff │ [?] Help
+Drafting:      Tab:Switch  Enter:Send  /:Commands  Esc:Quit
+Running:       Tab:Switch  Ctrl+C:Pause  /:Commands  Esc:Cancel
+PendingReview: Tab:Switch  /approve  /reject  /:Commands
 ```
 
 **Guidelines:**
 - Show 3-5 most relevant actions for current phase
-- Use consistent formatting: `[key] Action`
+- Use compact formatting: `Key:Action` or `/command`
 - Prioritize left-to-right by frequency of use
-- Always include help and quit as rightmost items
+- Always include `/:Commands` to hint at slash command system
 - Update immediately on phase transition
+- Show phase-specific slash commands when relevant
 
-**Rationale:** Reduces cognitive load by showing only relevant actions. Users don't need to memorize keybindings.
+**Rationale:** Reduces cognitive load by showing only relevant actions. Slash command hints teach discoverability.
 
 ---
 
@@ -539,6 +626,11 @@ Users can disable toasts or heartbeat if they find them distracting.
 | Live status | Spinners, countdowns | Transparency during long operations |
 | Codebase activity | Layered attention model | Peripheral → glanceable → focused → on-demand |
 | Diff visibility | Transient toasts | IDE-like flash without permanent screen cost |
+| Input model | Input-first, no reserved keys | Cursor visible = can type anything (Claude Code pattern) |
+| Actions | Slash commands + keybindings | Discoverable for new users, fast for power users |
+| Screen mode keys | Ctrl+1/2/3 (not plain 1/2/3) | Plain keys go to input, modifiers for actions |
+| Quit | Escape cascade | Clear → Cancel → Quit progression |
+| Model switching | `/model` command | Ctrl+M removed; slash command takes argument |
 
 ---
 
@@ -595,7 +687,9 @@ This document draws from established patterns in developer tools and AI assistan
   - Model flexibility with clear attribution
   - Commit message generation flow
 
-- **[Claude Code](https://github.com/anthropics/claude-code)** - Anthropic CLI
+- **[Claude Code](https://claude.ai/code)** - Anthropic CLI
+  - **Input-first design** - all typing goes to input, no mode switching
+  - **Slash commands** - `/help`, `/clear`, `/compact` for actions
   - Phase-based operation (plan → execute)
   - Inline approval for actions
   - Transparent context display
@@ -628,8 +722,10 @@ This document draws from established patterns in developer tools and AI assistan
 | Pattern | Source | Our Application |
 |---------|--------|-----------------|
 | Focus indicator | lazygit, k9s | Highlighted pane border |
-| Footer hints | lazygit | Phase-specific keybindings |
-| Command palette | k9s, VS Code | Ctrl+P for all commands |
+| Footer hints | lazygit | Phase-specific hints |
+| Slash commands | Claude Code | `/help`, `/quit`, phase commands |
+| Input-first | Claude Code | All typing goes to input |
+| Layered access | Common pattern | Slash commands + keybindings |
 | Inline approval | Cursor, Aider | Human checkpoints in context |
 | Model attribution | Aider | Every event shows model |
 | Progress indicators | CLI Guidelines | Spinners, countdown timers |

@@ -25,4 +25,4 @@ expression: result
 ┃                                                                              ┃
 ┃                                                                              ┃
 ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-[n] New Thread │ [o] Open Thread │ [Tab] Focus │ [1/2/3] Modes │ [?] Help │ [q]
+[Enter] Send message │ [/] Commands │ [Esc] Clear/Quit │ [Tab] Focus │ [F1] Help

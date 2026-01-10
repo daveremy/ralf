@@ -3,9 +3,7 @@ source: crates/ralf-tui/src/lib.rs
 expression: result
 ---
 ● No Thread │ "Select a thread to start"
-┌ Timeline ────────────────────────────────────────────────────────────────────┐
-│                                                                              │
-│                                                                              │
+┌ Conversation ────────────────────────────────────────────────────────────────┐
 │                                                                              │
 │                                                                              │
 │                                                                              │
@@ -22,7 +20,9 @@ expression: result
 │                                                                              │
 │                                                                              │
 │                                                                              │
+│──────────────────────────────────────────────────────────────────────────────│
+│> _                                                                           │
 │                                                                              │
 │                                                                              │
 └──────────────────────────────────────────────────────────────────────────────┘
-[j/k] Navigate │ [Enter] Toggle │ [y] Copy │ [Tab] Focus │ [1/2/3] Modes │ [?] H
+[Alt+j/k] Navigate │ [Enter] Send/Toggle │ [Ctrl+C] Copy │ [/] Commands │ [Esc]

@@ -20,12 +20,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Open the TUI (default when no command specified)
-    Tui,
-
-    /// Open the M5-A shell (new TUI architecture preview)
-    Shell,
-
     /// Detect models and print diagnostics
     Doctor {
         /// Output as JSON
@@ -87,17 +81,8 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        None | Some(Commands::Tui) => {
-            // Default: open TUI
-            let repo_path = std::env::current_dir().expect("Failed to get current directory");
-            let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-            if let Err(e) = rt.block_on(ralf_tui::run_tui(&repo_path)) {
-                eprintln!("Error: {e}");
-                std::process::exit(1);
-            }
-        }
-        Some(Commands::Shell) => {
-            // M5-A shell preview
+        None => {
+            // Default: open the shell TUI
             if let Err(e) = ralf_tui::run_shell_tui() {
                 eprintln!("Error: {e}");
                 std::process::exit(1);

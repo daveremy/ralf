@@ -20,11 +20,13 @@ use ratatui::{
 use super::screen_modes::{FocusedPane, ScreenMode};
 use crate::{
     context::ContextView,
+    conversation::ConversationPane,
     models::ModelStatus,
     shell::{TimelinePaneBounds, Toast},
     theme::{BorderSet, Theme},
     thread_state::ThreadDisplay,
-    timeline::{TimelineState, TimelineWidget},
+    timeline::TimelineState,
+    ui::widgets::TextInputState,
     widgets::{hints_for_state, FooterHints, ModelsPanel, Pane, StatusBar, StatusBarContent},
 };
 
@@ -45,6 +47,7 @@ pub fn render_shell(
     ascii_mode: bool,
     show_models_panel: bool,
     timeline: &TimelineState,
+    input: &TextInputState,
     timeline_bounds: &mut TimelinePaneBounds,
     toast: Option<&Toast>,
     thread: Option<&ThreadDisplay>,
@@ -85,6 +88,7 @@ pub fn render_shell(
         ascii_mode,
         show_models_panel,
         timeline,
+        input,
         timeline_bounds,
         phase,
     );
@@ -150,24 +154,27 @@ fn render_main_area(
     ascii_mode: bool,
     show_models_panel: bool,
     timeline: &TimelineState,
+    input: &TextInputState,
     timeline_bounds: &mut TimelinePaneBounds,
     phase: Option<ralf_engine::thread::PhaseKind>,
 ) {
     match screen_mode {
         ScreenMode::Split => {
-            // 40% Timeline | 60% Context
+            // 40% Conversation | 60% Artifact
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
                 .split(area);
 
-            render_timeline_pane(
+            render_conversation_pane(
                 frame,
                 chunks[0],
                 focused_pane == FocusedPane::Timeline,
                 theme,
                 timeline,
+                input,
                 timeline_bounds,
+                phase,
             );
             render_context_pane(
                 frame,
@@ -182,8 +189,8 @@ fn render_main_area(
             );
         }
         ScreenMode::TimelineFocus => {
-            // Focus mode: only timeline visible, always focused
-            render_timeline_pane(frame, area, true, theme, timeline, timeline_bounds);
+            // Focus mode: only conversation visible, always focused
+            render_conversation_pane(frame, area, true, theme, timeline, input, timeline_bounds, phase);
         }
         ScreenMode::ContextFocus => {
             // Focus mode: only context visible, always focused
@@ -202,23 +209,29 @@ fn render_main_area(
     }
 }
 
-/// Render the timeline pane.
-fn render_timeline_pane(
+/// Render the conversation pane (timeline + input).
+#[allow(clippy::too_many_arguments)]
+fn render_conversation_pane(
     frame: &mut Frame<'_>,
     area: Rect,
     focused: bool,
     theme: &Theme,
     timeline: &TimelineState,
+    input: &TextInputState,
     timeline_bounds: &mut TimelinePaneBounds,
+    phase: Option<ralf_engine::thread::PhaseKind>,
 ) {
     // Calculate inner area (accounting for 1-pixel border on all sides)
     // This is used for mouse coordinate translation
     timeline_bounds.inner_x = area.x.saturating_add(1);
     timeline_bounds.inner_y = area.y.saturating_add(1);
     timeline_bounds.inner_width = area.width.saturating_sub(2);
-    timeline_bounds.inner_height = area.height.saturating_sub(2);
+    // Reduce height to account for input area (3 lines) + divider (1 line)
+    timeline_bounds.inner_height = area.height.saturating_sub(2 + 3 + 1);
 
-    let widget = TimelineWidget::new(timeline, theme).focused(focused);
+    let widget = ConversationPane::new(timeline, input, theme)
+        .phase(phase)
+        .focused(focused);
     frame.render_widget(widget, area);
 }
 

@@ -21,19 +21,27 @@ git checkout -b feat/<feature-name>
 ### 3. Implementation Loop
 - Implement according to spec
 - Write tests alongside implementation
+- **Update docs**: Write/update the relevant mdBook chapter (`docs/book/src/`)
 - Verify: `cargo build`, `cargo clippy`, `cargo test`
 - Iterate until all acceptance criteria pass
 
-### 4. Review Phase
-- Get external reviews of implementation
-- Address any issues found
-- Ensure all criteria are met
-
-### 5. Commit & Merge
+### 4. Create Pull Request
 ```bash
-git commit -m "feat(scope): description"
-git checkout main
-git merge feat/<feature-name> --no-ff
+git push -u origin feat/<feature-name>
+gh pr create --title "feat(scope): description" --body "..."
+```
+- PR description should summarize changes and link to spec
+- This makes the diff reviewable
+
+### 5. Review & Merge
+- Get external reviews (Gemini, Codex) on the PR diff
+- Use `codex review --base main` for implementation review
+- Address any issues found
+- Ensure all acceptance criteria are met
+- Merge PR when reviews pass:
+```bash
+gh pr merge --merge
+git checkout main && git pull
 git branch -d feat/<feature-name>
 ```
 

@@ -88,6 +88,15 @@ impl TimelineState {
         }
     }
 
+    /// Clear all events from the timeline.
+    pub fn clear(&mut self) {
+        self.events.clear();
+        self.selected = None;
+        self.scroll_offset = 0;
+        // Keep follow mode as-is
+        // next_id not reset to avoid collisions if events are restored
+    }
+
     /// Move selection up. Stops at first event (no wrap).
     /// Disables follow mode.
     pub fn select_prev(&mut self) {
