@@ -139,15 +139,15 @@ impl<'a> SpecPreview<'a> {
 
     /// Build the phase badge line.
     fn build_phase_badge(&self) -> Line<'a> {
-        let (badge_color, badge_text) = match self.phase {
-            SpecPhase::Drafting => (self.theme.info, self.phase.label()),
-            SpecPhase::Assessing => (self.theme.warning, self.phase.label()),
-            SpecPhase::Ready => (self.theme.success, self.phase.label()),
+        let badge_color = match self.phase {
+            SpecPhase::Drafting => self.theme.info,
+            SpecPhase::Assessing => self.theme.warning,
+            SpecPhase::Ready => self.theme.success,
         };
 
         Line::from(vec![
             Span::styled("[", Style::default().fg(self.theme.muted)),
-            Span::styled(badge_text, Style::default().fg(badge_color).add_modifier(Modifier::BOLD)),
+            Span::styled(self.phase.label(), Style::default().fg(badge_color).add_modifier(Modifier::BOLD)),
             Span::styled("]", Style::default().fg(self.theme.muted)),
         ])
     }
@@ -196,17 +196,14 @@ impl<'a> SpecPreview<'a> {
 
     /// Render a checkbox item.
     fn render_checkbox(&self, checked: bool, text: &str) -> Line<'a> {
-        let checkbox = if checked { "[x]" } else { "[ ]" };
-        let checkbox_style = if checked {
-            Style::default().fg(self.theme.success)
+        let (checkbox, color) = if checked {
+            ("[x]", self.theme.success)
         } else {
-            Style::default().fg(self.theme.muted)
+            ("[ ]", self.theme.muted)
         };
 
         let segments = parse_inline(text);
-        let mut spans = vec![
-            Span::styled(format!("{checkbox} "), checkbox_style),
-        ];
+        let mut spans = vec![Span::styled(format!("{checkbox} "), Style::default().fg(color))];
         spans.extend(self.render_inline_segments(&segments));
         Line::from(spans)
     }

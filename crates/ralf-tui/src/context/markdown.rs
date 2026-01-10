@@ -218,14 +218,12 @@ pub fn parse_inline(text: &str) -> Vec<InlineSegment> {
         if c == '`' {
             if in_code {
                 // End of code span
-                segments.push(InlineSegment::Code(current.clone()));
-                current.clear();
+                segments.push(InlineSegment::Code(std::mem::take(&mut current)));
                 in_code = false;
             } else {
                 // Start of code span
                 if !current.is_empty() {
-                    segments.push(InlineSegment::Text(current.clone()));
-                    current.clear();
+                    segments.push(InlineSegment::Text(std::mem::take(&mut current)));
                 }
                 in_code = true;
             }

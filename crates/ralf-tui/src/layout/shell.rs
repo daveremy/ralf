@@ -272,11 +272,11 @@ fn render_context_pane(
             .focused(focused);
         frame.render_widget(models_panel, area);
     } else if matches!(view, ContextView::SpecEditor) {
-        // Render SpecPreview for spec editing phases
+        // Render SpecPreview for spec editing phases (Drafting is the default)
         let spec_phase = match phase {
             Some(PhaseKind::Assessing) => SpecPhase::Assessing,
             Some(PhaseKind::Finalized) => SpecPhase::Ready,
-            _ => SpecPhase::Drafting, // Default for Drafting and other phases
+            _ => SpecPhase::Drafting,
         };
 
         // Render spec preview inside a bordered pane
@@ -297,23 +297,21 @@ fn render_spec_pane(
     content: &str,
     phase: SpecPhase,
 ) {
-    // Create bordered pane
-    let (border_set, border_style) = if focused {
-        (borders.focused(), Style::default().fg(theme.border_focused))
+    let (border_set, border_color) = if focused {
+        (borders.focused(), theme.border_focused)
     } else {
-        (borders.normal(), Style::default().fg(theme.border))
+        (borders.normal(), theme.border)
     };
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_set(border_set)
-        .border_style(border_style)
+        .border_style(Style::default().fg(border_color))
         .title(Span::styled(" Spec ", Style::default().fg(theme.text)));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Render spec preview inside
     let preview = SpecPreview::new(content, phase, theme).focused(focused);
     frame.render_widget(preview, inner);
 }
