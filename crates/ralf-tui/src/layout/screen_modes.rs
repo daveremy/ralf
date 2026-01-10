@@ -25,11 +25,11 @@ pub enum ScreenMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FocusedPane {
     /// Timeline pane (left) has focus.
-    #[default]
     Timeline,
     /// Context/Canvas pane (right) has focus - shows Models or Context content.
     Context,
-    /// Input area (bottom) has focus - text entry.
+    /// Input area (bottom) has focus - text entry (default on startup).
+    #[default]
     Input,
 }
 
@@ -99,7 +99,8 @@ mod tests {
 
     #[test]
     fn test_default_focused_pane() {
-        assert_eq!(FocusedPane::default(), FocusedPane::Timeline);
+        // Input has focus by default so users can type immediately
+        assert_eq!(FocusedPane::default(), FocusedPane::Input);
     }
 
     #[test]

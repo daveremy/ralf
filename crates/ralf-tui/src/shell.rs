@@ -1515,7 +1515,7 @@ mod tests {
     fn test_shell_app_defaults() {
         let app = ShellApp::new();
         assert_eq!(app.screen_mode, ScreenMode::Split);
-        assert_eq!(app.focused_pane, FocusedPane::Timeline);
+        assert_eq!(app.focused_pane, FocusedPane::Input); // Input focused by default
         assert!(!app.should_quit);
         assert!(!app.probe_complete);
         assert!(app.show_models_panel);
@@ -1526,17 +1526,17 @@ mod tests {
     fn test_focus_cycling_in_split_mode() {
         let mut app = ShellApp::new();
         assert_eq!(app.screen_mode, ScreenMode::Split);
+        assert_eq!(app.focused_pane, FocusedPane::Input); // Starts at Input
+
+        // Tab cycles through Input → Timeline → Context → Input
+        app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(app.focused_pane, FocusedPane::Timeline);
 
-        // Tab cycles through Timeline → Context → Input → Timeline
         app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(app.focused_pane, FocusedPane::Context);
 
         app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(app.focused_pane, FocusedPane::Input);
-
-        app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-        assert_eq!(app.focused_pane, FocusedPane::Timeline);
     }
 
     #[test]
