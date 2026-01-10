@@ -566,8 +566,9 @@ impl ShellApp {
     /// Canvas keybindings are context-sensitive based on what's displayed:
     /// - When Models panel is showing:
     ///   - r: Refresh model status
-    ///   - a: Authenticate (if any model needs auth) - TODO
-    ///   - j/k: Navigate model list - TODO
+    ///   - a: Authenticate (if any model needs auth) - M5-B.4
+    ///   - j/k: Navigate model list - M5-B.4
+    ///   - Enter: Enable/disable model - M5-B.4
     fn handle_canvas_key(&mut self, key: KeyEvent) -> Option<ShellAction> {
         // Skip if modifier keys are pressed
         let has_ctrl_alt = key

@@ -539,9 +539,10 @@ Build remaining context views for full workflow support.
 - **DecisionPrompt** - Options with numbered keys (Paused, Stuck)
 - **DiffViewer** - File-by-file diff with navigation (PendingReview, Approved)
 - **CommitView** - Commit message editor + summary (ReadyToCommit, Done)
+- **ModelsPanel navigation** - j/k to navigate model list, Enter to enable/disable models
 - Timeline filtering by event type
 
-**Exit Criteria:** Can walk through entire workflow (Draft → Run → Review → Commit) with appropriate views at each phase.
+**Exit Criteria:** Can walk through entire workflow (Draft → Run → Review → Commit) with appropriate views at each phase. Can enable/disable models from Models panel.
 
 #### M5-B.5: Thread Management
 **Spec:** `SPEC-m5b5-thread-management.md`
