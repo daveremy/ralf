@@ -54,6 +54,8 @@ git branch -d feat/<feature-name>
 
 **IMPORTANT**: Always use external AI reviews for both specs and implementations. This catches issues early and provides diverse perspectives.
 
+**How to run reviews**: Claude should run these commands headlessly via the Bash tool. When the workflow says "get external reviews", Claude executes the gemini/codex commands directly rather than asking the user to run them manually.
+
 ### Gemini CLI
 
 Gemini has a large context window - ideal for reviewing multiple files together.
