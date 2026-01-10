@@ -1876,4 +1876,27 @@ mod tests {
         assert!(app.chat_thread.is_none());
         assert!(app.last_chat_model.is_none());
     }
+
+    /// Test that send_chat_message actually spawns an async task.
+    ///
+    /// This requires a tokio runtime - if it panics, the runtime integration is broken.
+    #[tokio::test]
+    async fn test_send_chat_spawns_task() {
+        let mut app = ShellApp::new();
+        app.models[0].state = crate::models::ModelState::Ready;
+
+        // This should spawn a tokio task without panicking
+        app.send_chat_message("test message");
+
+        // Verify chat state was updated
+        assert!(app.chat_loading);
+        assert!(app.chat_thread.is_some());
+        assert!(app.chat_rx.is_some());
+        assert!(app.last_chat_model.is_some());
+
+        // User message should be in timeline
+        assert!(app.timeline.events().iter().any(|e| {
+            matches!(&e.kind, EventKind::Spec(spec) if spec.is_user && spec.content.contains("test message"))
+        }));
+    }
 }
