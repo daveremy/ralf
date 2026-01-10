@@ -567,6 +567,7 @@ impl ShellApp {
     /// - When Models panel is showing:
     ///   - r: Refresh model status
     ///   - a: Authenticate (if any model needs auth) - TODO
+    ///   - j/k: Navigate model list - TODO
     fn handle_canvas_key(&mut self, key: KeyEvent) -> Option<ShellAction> {
         // Skip if modifier keys are pressed
         let has_ctrl_alt = key

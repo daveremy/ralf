@@ -62,6 +62,8 @@ When **Canvas** is focused (context-sensitive):
 - **Models Panel:**
   - `r` - Refresh model status
   - `a` - Authenticate (if any model needs auth)
+  - `j/k` or `↓/↑` - Navigate model list
+  - `Enter` - Select/toggle model
 - **Diff View (future):**
   - `a` - Approve changes
   - `r` - Reject changes
