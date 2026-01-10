@@ -100,10 +100,9 @@ impl StatusBarContent {
         match phase {
             PhaseKind::Drafting => "/accept when ready",
             PhaseKind::Assessing => "/approve or /edit",
-            PhaseKind::Finalized => "/run to start",
+            PhaseKind::Finalized | PhaseKind::Configuring => "/run to start",
             PhaseKind::Preflight => "Checking...",
             PhaseKind::PreflightFailed => "Fix issues",
-            PhaseKind::Configuring => "/run to start",
             PhaseKind::Running => "Running...",
             PhaseKind::Verifying => "Verifying...",
             PhaseKind::Paused => "/resume or /configure",
@@ -111,8 +110,7 @@ impl StatusBarContent {
             PhaseKind::Implemented => "/review",
             PhaseKind::Polishing => "/done when ready",
             PhaseKind::PendingReview => "/approve or /reject",
-            PhaseKind::Approved => "/commit",
-            PhaseKind::ReadyToCommit => "/commit",
+            PhaseKind::Approved | PhaseKind::ReadyToCommit => "/commit",
             PhaseKind::Done => "Complete!",
             PhaseKind::Abandoned => "Abandoned",
         }

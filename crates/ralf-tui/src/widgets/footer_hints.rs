@@ -306,45 +306,25 @@ fn context_hints_for_phase(phase: Option<PhaseKind>) -> Vec<KeyHint> {
             KeyHint::new("Enter", "Send"),
             KeyHint::new("/finalize", "Finalize"),
         ],
-        Some(PhaseKind::Finalized) => {
-            vec![KeyHint::new("Enter", "Run")]
-        }
-        Some(PhaseKind::Preflight) => vec![], // Auto-progresses
-        Some(PhaseKind::PreflightFailed) => {
-            vec![KeyHint::new("Enter", "Retry")]
-        }
-        Some(PhaseKind::Configuring) => {
-            vec![KeyHint::new("Enter", "Start")]
-        }
-        // Note: Running can pause, Verifying cannot (different transitions)
+        Some(PhaseKind::Finalized) => vec![KeyHint::new("Enter", "Run")],
+        // Auto-progressing phases with no user action
+        Some(PhaseKind::Preflight | PhaseKind::Verifying) => vec![],
+        Some(PhaseKind::PreflightFailed) => vec![KeyHint::new("Enter", "Retry")],
+        Some(PhaseKind::Configuring) => vec![KeyHint::new("Enter", "Start")],
         Some(PhaseKind::Running) => vec![KeyHint::new("/pause", "Pause")],
-        Some(PhaseKind::Verifying) => {
-            // Verifying can't transition to Paused; wait for completion
-            vec![]
-        }
         Some(PhaseKind::Paused) => vec![
             KeyHint::new("/resume", "Resume"),
             KeyHint::new("/cancel", "Cancel"),
         ],
-        Some(PhaseKind::Stuck) => {
-            vec![KeyHint::new("Enter", "Provide input")]
-        }
-        Some(PhaseKind::Implemented) => {
-            vec![KeyHint::new("Enter", "Review")]
-        }
-        Some(PhaseKind::Polishing) => {
-            vec![KeyHint::new("Enter", "Finish")]
-        }
+        Some(PhaseKind::Stuck) => vec![KeyHint::new("Enter", "Provide input")],
+        Some(PhaseKind::Implemented) => vec![KeyHint::new("Enter", "Review")],
+        Some(PhaseKind::Polishing) => vec![KeyHint::new("Enter", "Finish")],
         Some(PhaseKind::PendingReview) => vec![
             KeyHint::new("/approve", "Approve"),
             KeyHint::new("/reject", "Reject"),
         ],
-        Some(PhaseKind::Approved) => {
-            vec![KeyHint::new("Enter", "Ready")]
-        }
-        Some(PhaseKind::ReadyToCommit) => {
-            vec![KeyHint::new("Enter", "Commit")]
-        }
+        Some(PhaseKind::Approved) => vec![KeyHint::new("Enter", "Ready")],
+        Some(PhaseKind::ReadyToCommit) => vec![KeyHint::new("Enter", "Commit")],
     }
 }
 

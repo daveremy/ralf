@@ -87,7 +87,28 @@ impl<'a> TimelineWidget<'a> {
             "claude" => self.theme.claude,
             "gemini" => self.theme.gemini,
             "codex" => self.theme.codex,
-            _ => self.theme.info, // Fallback for unknown models
+            _ => self.theme.info,
+        }
+    }
+
+    /// Render a "[+N more]" truncation indicator.
+    fn render_truncation_indicator(
+        &self,
+        y: &mut u16,
+        area: Rect,
+        buf: &mut Buffer,
+        remaining_lines: usize,
+    ) {
+        if *y < area.y + area.height {
+            let line = Line::from(vec![
+                Span::raw("         "),
+                Span::styled(
+                    format!("[+{remaining_lines} more]"),
+                    Style::default().fg(self.theme.muted),
+                ),
+            ]);
+            Paragraph::new(line).render(Rect::new(area.x, *y, area.width, 1), buf);
+            *y += 1;
         }
     }
 
@@ -221,28 +242,16 @@ impl<'a> TimelineWidget<'a> {
                     y += 1;
                 }
 
-                // Show "[+N more]" if truncated (only for non-selected events)
-                if has_more && y < area.y + area.height {
-                    let more = total_lines - max_lines;
-                    let line = Line::from(vec![
-                        Span::raw("         "),
-                        Span::styled(
-                            format!("[+{more} more]"),
-                            Style::default().fg(self.theme.muted),
-                        ),
-                    ]);
-                    let para = Paragraph::new(line);
-                    para.render(Rect::new(area.x, y, area.width, 1), buf);
-                    y += 1;
+                if has_more {
+                    self.render_truncation_indicator(&mut y, area, buf, total_lines - max_lines);
                 }
             } else {
                 // Plain text rendering for user/system messages
-                // Wrap each content line to fit available width
                 let content_lines = event.content_lines();
-                let mut wrapped_content: Vec<String> = Vec::new();
-                for line in &content_lines {
-                    wrapped_content.extend(wrap_text(line, content_width));
-                }
+                let wrapped_content: Vec<String> = content_lines
+                    .iter()
+                    .flat_map(|line| wrap_text(line, content_width))
+                    .collect();
 
                 let total_lines = wrapped_content.len();
                 let display_lines = total_lines.min(max_lines);
@@ -260,24 +269,12 @@ impl<'a> TimelineWidget<'a> {
                         Span::styled(prefix, Style::default().fg(self.theme.muted)),
                         Span::styled(content_line.clone(), Style::default().fg(self.theme.text)),
                     ]);
-                    let para = Paragraph::new(line);
-                    para.render(Rect::new(area.x, y, area.width, 1), buf);
+                    Paragraph::new(line).render(Rect::new(area.x, y, area.width, 1), buf);
                     y += 1;
                 }
 
-                // Show "[+N more]" if truncated (only for non-selected events)
-                if has_more && y < area.y + area.height {
-                    let more = total_lines - max_lines;
-                    let line = Line::from(vec![
-                        Span::raw("         "),
-                        Span::styled(
-                            format!("[+{more} more]"),
-                            Style::default().fg(self.theme.muted),
-                        ),
-                    ]);
-                    let para = Paragraph::new(line);
-                    para.render(Rect::new(area.x, y, area.width, 1), buf);
-                    y += 1;
+                if has_more {
+                    self.render_truncation_indicator(&mut y, area, buf, total_lines - max_lines);
                 }
             }
         }
