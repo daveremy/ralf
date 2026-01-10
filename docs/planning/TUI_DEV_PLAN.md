@@ -476,29 +476,30 @@ Consider adding [Kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboa
 
 Requires `PushKeyboardEnhancementFlags` with `DISAMBIGUATE_ESCAPE_CODES`. Supported in modern terminals: iTerm2, WezTerm, Kitty, Alacritty. Should gracefully fall back when unsupported.
 
-##### M5-B.3b: Chat Integration
+##### M5-B.3b: Chat Integration ✓
 **Spec:** `SPEC-m5b3b-chat-integration.md`
+**Status:** Complete (2026-01-10)
 
 Wire the input to the chat system, creating SpecEvents from user/AI messages.
 
 **Deliverables:**
-- ChatState management (thread, input, loading, error)
-- Async AI invocation via tokio + mpsc channels
-- User messages → SpecEvent in timeline
-- AI responses → SpecEvent with model attribution
-- Thread creation on first message
-- Thread.draft feedback loop (extracted spec fed to AI)
-- Thread persistence (save after AI responses)
+- ✓ ChatState management (thread, input, loading, error)
+- ✓ Async AI invocation via tokio + mpsc channels
+- ✓ User messages → SpecEvent in timeline
+- ✓ AI responses → SpecEvent with model attribution
+- ✓ Thread creation on first message
+- ✓ Thread.draft feedback loop (extracted spec fed to AI)
+- Thread persistence deferred to M5-B.5
 - **Live model status updates:**
-  - Cache model status to `.ralf/models.json` (no probe on every startup)
-  - Update status on API success → "Ready"
-  - Update status on rate limit → "Rate Limited" + cooldown timer
-  - Update status on auth failure → "Auth Required"
-  - Update status on error/timeout → "Unavailable"
-  - Status bar shows live cooldown timers
-  - Manual refresh via `/refresh` or `Ctrl+R`
+  - ✓ Update status on API success → "Ready"
+  - ✓ Update status on rate limit → "Rate Limited" + cooldown timer
+  - ✓ Update status on auth failure → "Auth Required"
+  - ✓ Update status on error/timeout → "Unavailable"
+  - ✓ Status bar shows model status indicators
+  - ✓ Manual refresh via `Ctrl+R` (when models panel focused)
+  - Model status caching deferred to M5-B.4
 
-**Exit Criteria:** Can chat with AI, messages appear in timeline as SpecEvents, thread is created and persisted. Model status updates based on actual API interactions.
+**Exit Criteria:** ✓ Can chat with AI, messages appear in timeline as SpecEvents. Model status updates based on actual API interactions.
 
 ##### M5-B.3c: Spec Artifact View
 **Spec:** `SPEC-m5b3c-spec-artifact.md`
@@ -625,8 +626,8 @@ M5-B (Conversation & Artifacts)
   │   ├── M5-B.3a (Timeline Input) ✓
   │   ├── M5-B.3a' (Slash Commands) ✓
   │   ├── M5-B.3a'' (Focus Model & Layout Rework) ✓
-  │   ├── M5-B.3b (Chat Integration) ← NEXT
-  │   ├── M5-B.3c (Spec Artifact View)
+  │   ├── M5-B.3b (Chat Integration) ✓
+  │   ├── M5-B.3c (Spec Artifact View) ← NEXT
   │   └── M5-B.3d (Run Artifact Views)
   ├── M5-B.4 (Advanced Artifact Views)
   └── M5-B.5 (Thread Management)
@@ -800,3 +801,4 @@ crates/ralf-tui/src/
 | 2026-01-09 | Added M5-B.3a'' (Focus Model & Layout Rework) based on manual testing feedback. Decisions: full-width input bar, status bar at bottom replacing footer hints, explicit focus model with pane-specific keybindings. |
 | 2026-01-09 | Added Kitty keyboard protocol as future consideration in M5-B.3a'' for Command+1/2/3 on Mac and enhanced modifier detection. |
 | 2026-01-09 | Completed M5-B.3a'' (Focus Model & Layout Rework): three-way focus, full-width input, pane-specific keybindings, toast notifications. Added mouse text selection to M5-C polish items. |
+| 2026-01-10 | Completed M5-B.3b (Chat Integration): async AI invocation, user/AI messages in timeline, model status updates, panic hook for terminal restoration, integration tests and testing documentation. |
