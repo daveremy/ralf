@@ -25,7 +25,12 @@ git checkout -b feat/<feature-name>
 - Verify: `cargo build`, `cargo clippy`, `cargo test`
 - Iterate until all acceptance criteria pass
 
-### 4. Create Pull Request
+### 4. Code Simplification
+- Run `code-simplifier` agent on recently modified files
+- Review and commit simplifications
+- This catches redundancy, improves clarity, and ensures consistency
+
+### 5. Create Pull Request
 ```bash
 git push -u origin feat/<feature-name>
 gh pr create --title "feat(scope): description" --body "..."
@@ -33,7 +38,7 @@ gh pr create --title "feat(scope): description" --body "..."
 - PR description should summarize changes and link to spec
 - This makes the diff reviewable
 
-### 5. Review & Merge
+### 6. Review & Merge
 - Get external reviews (Gemini, Codex) on the PR diff
 - Use `codex review --base main` for implementation review
 - Address any issues found
