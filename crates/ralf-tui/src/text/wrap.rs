@@ -178,4 +178,49 @@ mod tests {
         let wrapped = wrap_lines(lines, 20);
         assert!(wrapped.len() > 2);
     }
+
+    #[test]
+    fn test_wrap_text_unicode() {
+        // Test with emoji and unicode characters
+        let text = "Hello 🎉 world 你好 this is a test with émojis and ünïcödé";
+        let lines = wrap_text(text, 15);
+        assert!(lines.len() > 1);
+        // Verify all content is preserved (no panics, no lost chars)
+        let rejoined: String = lines.join(" ");
+        // textwrap may normalize whitespace, so just check key parts exist
+        assert!(rejoined.contains("🎉"));
+        assert!(rejoined.contains("你好"));
+        assert!(rejoined.contains("émojis"));
+    }
+
+    #[test]
+    fn test_wrap_line_unicode_with_style() {
+        // Test styled line with unicode - this is the risky case
+        let line = Line::from(vec![
+            Span::styled("Hello 🎉 ", Style::default().fg(Color::Red)),
+            Span::styled("你好世界", Style::default().fg(Color::Blue)),
+        ]);
+        let wrapped = wrap_line(line, 10);
+        // Should not panic and should produce output
+        assert!(!wrapped.is_empty());
+        // Verify emoji and Chinese chars are somewhere in output
+        let all_text: String = wrapped
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(all_text.contains("🎉"));
+        assert!(all_text.contains("你好"));
+    }
+
+    #[test]
+    fn test_wrap_line_emoji_sequence() {
+        // Test with emoji that have modifiers (skin tones, ZWJ sequences)
+        let line = Line::from(vec![
+            Span::styled("Family: 👨‍👩‍👧‍👦 ", Style::default().fg(Color::Green)),
+            Span::styled("Wave: 👋🏽", Style::default().fg(Color::Yellow)),
+        ]);
+        let wrapped = wrap_line(line, 20);
+        assert!(!wrapped.is_empty());
+        // Just verify no panic - complex emoji handling is tricky
+    }
 }
