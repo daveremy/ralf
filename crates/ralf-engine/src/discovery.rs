@@ -240,9 +240,9 @@ pub fn probe_model_with_info(info: &ModelInfo, timeout: Duration) -> ProbeResult
         Err(e) => {
             if e.to_string().contains("timed out") {
                 result.issues.push("Probe timed out".into());
-                result.needs_auth = true;
+                // Don't assume timeout = needs auth; model may just be slow
                 result.suggestions.push(
-                    "Model may be waiting for auth prompt or OAuth flow. \
+                    "Model may be slow or waiting for interactive prompt. \
                      Try running the model manually first."
                         .into(),
                 );
@@ -267,7 +267,8 @@ fn run_probe_command(name: &str, timeout: Duration) -> Result<ProbeOutput, std::
     use std::io::{Read, Write};
     use std::process::{Command, Stdio};
 
-    let probe_prompt = "Say 'ok' and nothing else.";
+    // Explicit prompt to prevent agentic models from reading codebase
+    let probe_prompt = "Ping. Just say 'ok' - do not read files or use tools.";
 
     // Build command based on model
     // Some CLIs take prompt via stdin, others via -p argument
