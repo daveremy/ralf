@@ -431,8 +431,12 @@ impl ShellApp {
                 KeyResult::Handled
             }
 
-            // Shift+Enter inserts newline
-            KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            // Shift+Enter or Ctrl+Enter inserts newline
+            KeyCode::Enter
+                if key
+                    .modifiers
+                    .intersects(KeyModifiers::SHIFT | KeyModifiers::CONTROL) =>
+            {
                 self.input.insert('\n');
                 self.reset_autocomplete();
                 KeyResult::Handled

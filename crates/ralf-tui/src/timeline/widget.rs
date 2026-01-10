@@ -10,6 +10,7 @@ use ratatui::{
 
 use super::event::{EventKind, ReviewResult, SystemLevel, TimelineEvent, MAX_EXPANDED_LINES};
 use super::state::TimelineState;
+use crate::text::render_markdown;
 use crate::theme::Theme;
 
 /// Timeline pane widget.
@@ -78,6 +79,7 @@ impl<'a> TimelineWidget<'a> {
     }
 
     /// Render a single event.
+    #[allow(clippy::too_many_lines)]
     fn render_event(
         &self,
         event: &TimelineEvent,
@@ -155,43 +157,93 @@ impl<'a> TimelineWidget<'a> {
             para.render(Rect::new(area.x, y, area.width, 1), buf);
             y += 1;
         } else {
-            // Expanded content
-            let content_lines = event.content_lines();
-            let display_lines = content_lines.len().min(MAX_EXPANDED_LINES);
-            let has_more = content_lines.len() > MAX_EXPANDED_LINES;
+            // Expanded content - check if assistant message for markdown rendering
+            let is_assistant_message = matches!(
+                &event.kind,
+                EventKind::Spec(spec) if !spec.is_user
+            );
 
-            for (i, content_line) in content_lines.iter().take(display_lines).enumerate() {
-                if y >= area.y + area.height {
-                    break;
+            if is_assistant_message {
+                // Render assistant messages with markdown styling
+                let content = event.copyable_content();
+                let md_lines = render_markdown(&content, width.saturating_sub(9), self.theme);
+                let total_lines = md_lines.len();
+                let display_lines = total_lines.min(MAX_EXPANDED_LINES);
+                let has_more = total_lines > MAX_EXPANDED_LINES;
+
+                for (i, md_line) in md_lines.into_iter().take(display_lines).enumerate() {
+                    if y >= area.y + area.height {
+                        break;
+                    }
+
+                    let prefix = if i == 0 { collapse_indicator } else { "  " };
+
+                    // Prepend indentation and collapse indicator to the markdown line
+                    let mut final_spans = vec![
+                        Span::raw("       "),
+                        Span::styled(prefix, Style::default().fg(self.theme.muted)),
+                    ];
+                    final_spans.extend(md_line.spans);
+
+                    let line = Line::from(final_spans);
+                    let para = Paragraph::new(line);
+                    para.render(Rect::new(area.x, y, area.width, 1), buf);
+                    y += 1;
                 }
 
-                let prefix = if i == 0 { collapse_indicator } else { "  " };
-                let max_len = width.saturating_sub(9);
-                let display = truncate_str(content_line, max_len);
+                // Show "[+N more]" if truncated
+                if has_more && y < area.y + area.height {
+                    let more = total_lines - MAX_EXPANDED_LINES;
+                    let line = Line::from(vec![
+                        Span::raw("         "),
+                        Span::styled(
+                            format!("[+{more} more]"),
+                            Style::default().fg(self.theme.muted),
+                        ),
+                    ]);
+                    let para = Paragraph::new(line);
+                    para.render(Rect::new(area.x, y, area.width, 1), buf);
+                    y += 1;
+                }
+            } else {
+                // Plain text rendering for user/system messages
+                let content_lines = event.content_lines();
+                let display_lines = content_lines.len().min(MAX_EXPANDED_LINES);
+                let has_more = content_lines.len() > MAX_EXPANDED_LINES;
 
-                let line = Line::from(vec![
-                    Span::raw("       "),
-                    Span::styled(prefix, Style::default().fg(self.theme.muted)),
-                    Span::styled(display, Style::default().fg(self.theme.text)),
-                ]);
-                let para = Paragraph::new(line);
-                para.render(Rect::new(area.x, y, area.width, 1), buf);
-                y += 1;
-            }
+                for (i, content_line) in content_lines.iter().take(display_lines).enumerate() {
+                    if y >= area.y + area.height {
+                        break;
+                    }
 
-            // Show "[+N more]" if truncated
-            if has_more && y < area.y + area.height {
-                let more = content_lines.len() - MAX_EXPANDED_LINES;
-                let line = Line::from(vec![
-                    Span::raw("         "),
-                    Span::styled(
-                        format!("[+{more} more]"),
-                        Style::default().fg(self.theme.muted),
-                    ),
-                ]);
-                let para = Paragraph::new(line);
-                para.render(Rect::new(area.x, y, area.width, 1), buf);
-                y += 1;
+                    let prefix = if i == 0 { collapse_indicator } else { "  " };
+                    let max_len = width.saturating_sub(9);
+                    let display = truncate_str(content_line, max_len);
+
+                    let line = Line::from(vec![
+                        Span::raw("       "),
+                        Span::styled(prefix, Style::default().fg(self.theme.muted)),
+                        Span::styled(display, Style::default().fg(self.theme.text)),
+                    ]);
+                    let para = Paragraph::new(line);
+                    para.render(Rect::new(area.x, y, area.width, 1), buf);
+                    y += 1;
+                }
+
+                // Show "[+N more]" if truncated
+                if has_more && y < area.y + area.height {
+                    let more = content_lines.len() - MAX_EXPANDED_LINES;
+                    let line = Line::from(vec![
+                        Span::raw("         "),
+                        Span::styled(
+                            format!("[+{more} more]"),
+                            Style::default().fg(self.theme.muted),
+                        ),
+                    ]);
+                    let para = Paragraph::new(line);
+                    para.render(Rect::new(area.x, y, area.width, 1), buf);
+                    y += 1;
+                }
             }
         }
 

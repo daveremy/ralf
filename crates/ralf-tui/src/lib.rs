@@ -26,6 +26,7 @@ mod screens;
 pub mod shell;
 #[cfg(test)]
 pub mod test_utils;
+pub mod text;
 pub mod theme;
 pub mod thread_state;
 pub mod timeline;
@@ -44,6 +45,7 @@ pub use conversation::{input_placeholder, ConversationPane};
 pub use layout::{FocusedPane, ScreenMode};
 pub use models::{ModelState, ModelStatus, ModelsSummary};
 pub use shell::{run_shell, ShellApp, UiConfig};
+pub use text::{render_markdown, MarkdownStyles};
 pub use theme::{BorderSet, IconMode, IconSet, Theme};
 pub use thread_state::ThreadDisplay;
 pub use timeline::{
@@ -54,7 +56,10 @@ pub use ui::widgets::TextInputState;
 
 use crossterm::{
     cursor::Show as ShowCursor,
-    event::{DisableMouseCapture, EnableMouseCapture},
+    event::{
+        DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -75,6 +80,8 @@ impl Drop for TerminalGuard {
 ///
 /// Called by `TerminalGuard::drop` and panic hook to ensure terminal is usable.
 fn restore_terminal() {
+    // Pop keyboard enhancement (may fail on unsupported terminals, that's ok)
+    let _ = execute!(stdout(), PopKeyboardEnhancementFlags);
     let _ = disable_raw_mode();
     let _ = execute!(stdout(), DisableMouseCapture, LeaveAlternateScreen, ShowCursor);
 }
@@ -147,6 +154,16 @@ pub fn run_shell_tui() -> Result<(), Box<dyn std::error::Error>> {
     // Setup terminal with RAII guard for cleanup
     enable_raw_mode()?;
     let _guard = TerminalGuard;
+
+    // Enable keyboard enhancement for proper Shift+Enter detection.
+    // Some terminals (legacy Windows) don't support this; ignore errors.
+    let _ = execute!(
+        stdout(),
+        PushKeyboardEnhancementFlags(
+            KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+        )
+    );
 
     let mut stdout = stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -326,8 +343,11 @@ fn handle_spec_studio_key(
 ) -> bool {
     use crossterm::event::{KeyCode, KeyModifiers};
 
-    // Handle Ctrl+Enter to insert newline
-    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Enter {
+    // Handle Ctrl+Enter or Shift+Enter to insert newline
+    if (key.modifiers.contains(KeyModifiers::CONTROL)
+        || key.modifiers.contains(KeyModifiers::SHIFT))
+        && key.code == KeyCode::Enter
+    {
         app.input_state.insert('\n');
         return true;
     }
