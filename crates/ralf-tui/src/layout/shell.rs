@@ -27,7 +27,7 @@ use crate::{
     thread_state::ThreadDisplay,
     timeline::TimelineState,
     ui::widgets::TextInputState,
-    widgets::{hints_for_state, FooterHints, ModelsPanel, Pane, StatusBar, StatusBarContent},
+    widgets::{FooterHints, InputBar, ModelsPanel, Pane, StatusBar, StatusBarContent},
 };
 
 /// Minimum terminal width.
@@ -60,12 +60,13 @@ pub fn render_shell(
         return;
     }
 
-    // Divide into: StatusBar | MainArea | FooterHints
+    // Divide into: StatusBar | MainArea | InputBar | FooterHints
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(1), // Status bar
             Constraint::Min(0),    // Main area (expands)
+            Constraint::Length(3), // Input bar (always visible)
             Constraint::Length(1), // Footer hints
         ])
         .split(area);
@@ -75,8 +76,10 @@ pub fn render_shell(
     let status_bar = StatusBar::new(&status_content, models, theme).ascii_mode(ascii_mode);
     frame.render_widget(status_bar, chunks[0]);
 
-    // Main pane area
+    // Extract phase once for reuse
     let phase = thread.map(|t| t.phase_kind);
+
+    // Main pane area (timeline and/or canvas)
     render_main_area(
         frame,
         chunks[1],
@@ -88,16 +91,21 @@ pub fn render_shell(
         ascii_mode,
         show_models_panel,
         timeline,
-        input,
         timeline_bounds,
         phase,
     );
 
-    // Footer with phase-aware hints
-    let phase = thread.map(|t| t.phase_kind);
-    let hints = hints_for_state(phase, screen_mode, focused_pane, show_models_panel);
-    let footer = FooterHints::new(&hints, theme);
-    frame.render_widget(footer, chunks[2]);
+    // Full-width input bar (always visible)
+    let input_bar = InputBar::new(input, theme).focused(focused_pane == FocusedPane::Input);
+    frame.render_widget(input_bar, chunks[2]);
+
+    // Footer with status bar format: Mode │ Focus │ Phase    [pane-specific hints]
+    let hints = FooterHints::pane_hints(focused_pane, show_models_panel);
+    let footer = FooterHints::new(&hints, theme)
+        .screen_mode(screen_mode)
+        .focused_pane(focused_pane)
+        .phase(phase);
+    frame.render_widget(footer, chunks[3]);
 
     // Render toast notification if present
     if let Some(toast) = toast {
@@ -122,13 +130,9 @@ fn render_toast(frame: &mut Frame<'_>, area: Rect, toast: &Toast) {
     // Clear the area behind the toast
     frame.render_widget(Clear, toast_area);
 
-    // Render toast with green background for success
+    // Red background for errors, green for success
     let is_error = toast.message.contains("failed") || toast.message.contains("unavailable");
-    let bg_color = if is_error {
-        Color::Red
-    } else {
-        Color::Green
-    };
+    let bg_color = if is_error { Color::Red } else { Color::Green };
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -154,27 +158,24 @@ fn render_main_area(
     ascii_mode: bool,
     show_models_panel: bool,
     timeline: &TimelineState,
-    input: &TextInputState,
     timeline_bounds: &mut TimelinePaneBounds,
     phase: Option<ralf_engine::thread::PhaseKind>,
 ) {
     match screen_mode {
         ScreenMode::Split => {
-            // 40% Conversation | 60% Artifact
+            // 40% Timeline | 60% Canvas
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
                 .split(area);
 
-            render_conversation_pane(
+            render_timeline_pane(
                 frame,
                 chunks[0],
                 focused_pane == FocusedPane::Timeline,
                 theme,
                 timeline,
-                input,
                 timeline_bounds,
-                phase,
             );
             render_context_pane(
                 frame,
@@ -189,15 +190,22 @@ fn render_main_area(
             );
         }
         ScreenMode::TimelineFocus => {
-            // Focus mode: only conversation visible, always focused
-            render_conversation_pane(frame, area, true, theme, timeline, input, timeline_bounds, phase);
+            // Focus mode: only timeline visible
+            render_timeline_pane(
+                frame,
+                area,
+                focused_pane == FocusedPane::Timeline,
+                theme,
+                timeline,
+                timeline_bounds,
+            );
         }
         ScreenMode::ContextFocus => {
-            // Focus mode: only context visible, always focused
+            // Focus mode: only context/canvas visible
             render_context_pane(
                 frame,
                 area,
-                true,
+                focused_pane == FocusedPane::Context,
                 theme,
                 borders,
                 models,
@@ -209,29 +217,23 @@ fn render_main_area(
     }
 }
 
-/// Render the conversation pane (timeline + input).
-#[allow(clippy::too_many_arguments)]
-fn render_conversation_pane(
+/// Render the timeline pane (events only, input is rendered separately).
+fn render_timeline_pane(
     frame: &mut Frame<'_>,
     area: Rect,
     focused: bool,
     theme: &Theme,
     timeline: &TimelineState,
-    input: &TextInputState,
     timeline_bounds: &mut TimelinePaneBounds,
-    phase: Option<ralf_engine::thread::PhaseKind>,
 ) {
     // Calculate inner area (accounting for 1-pixel border on all sides)
     // This is used for mouse coordinate translation
     timeline_bounds.inner_x = area.x.saturating_add(1);
     timeline_bounds.inner_y = area.y.saturating_add(1);
     timeline_bounds.inner_width = area.width.saturating_sub(2);
-    // Reduce height to account for input area (3 lines) + divider (1 line)
-    timeline_bounds.inner_height = area.height.saturating_sub(2 + 3 + 1);
+    timeline_bounds.inner_height = area.height.saturating_sub(2);
 
-    let widget = ConversationPane::new(timeline, input, theme)
-        .phase(phase)
-        .focused(focused);
+    let widget = ConversationPane::from_timeline(timeline, theme).focused(focused);
     frame.render_widget(widget, area);
 }
 

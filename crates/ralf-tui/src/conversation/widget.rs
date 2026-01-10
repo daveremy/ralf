@@ -25,7 +25,7 @@ const INPUT_HEIGHT: u16 = 3;
 /// Height for the divider line.
 const DIVIDER_HEIGHT: u16 = 1;
 
-/// Conversation pane widget combining timeline and input.
+/// Conversation pane widget combining timeline and optionally input.
 ///
 /// ```text
 /// ┌─ Conversation ──────────────────────┐
@@ -42,14 +42,14 @@ const DIVIDER_HEIGHT: u16 = 1;
 /// ```
 pub struct ConversationPane<'a> {
     timeline: &'a TimelineState,
-    input: &'a TextInputState,
+    input: Option<&'a TextInputState>,
     phase: Option<PhaseKind>,
     theme: &'a Theme,
     focused: bool,
 }
 
 impl<'a> ConversationPane<'a> {
-    /// Create a new conversation pane.
+    /// Create a new conversation pane with timeline and input.
     pub fn new(
         timeline: &'a TimelineState,
         input: &'a TextInputState,
@@ -57,7 +57,18 @@ impl<'a> ConversationPane<'a> {
     ) -> Self {
         Self {
             timeline,
-            input,
+            input: Some(input),
+            phase: None,
+            theme,
+            focused: false,
+        }
+    }
+
+    /// Create a new conversation pane with timeline only (input rendered separately).
+    pub fn from_timeline(timeline: &'a TimelineState, theme: &'a Theme) -> Self {
+        Self {
+            timeline,
+            input: None,
             phase: None,
             theme,
             focused: false,
@@ -80,6 +91,11 @@ impl<'a> ConversationPane<'a> {
 
     /// Render the input area.
     fn render_input(&self, area: Rect, buf: &mut Buffer) {
+        // Get the input state (should always be Some when this is called)
+        let Some(input) = self.input else {
+            return;
+        };
+
         // Get placeholder based on phase
         let placeholder = input_placeholder(self.phase);
 
@@ -88,7 +104,7 @@ impl<'a> ConversationPane<'a> {
         let prompt_len = prompt.len();
 
         // Determine what to display
-        if self.input.is_empty() {
+        if input.is_empty() {
             // Show placeholder or cursor
             let mut spans = vec![Span::styled(
                 prompt,
@@ -110,8 +126,8 @@ impl<'a> ConversationPane<'a> {
             Paragraph::new(vec![line]).render(area, buf);
         } else {
             // Show content with cursor
-            let content = self.input.content();
-            let cursor_pos = self.input.cursor;
+            let content = input.content();
+            let cursor_pos = input.cursor;
 
             let mut lines: Vec<Line<'_>> = Vec::new();
             let mut current_line_spans: Vec<Span<'_>> = Vec::new();
@@ -197,8 +213,14 @@ impl Widget for ConversationPane<'_> {
             Style::default().fg(self.theme.border)
         };
 
+        let title = if self.input.is_some() {
+            " Conversation "
+        } else {
+            " Timeline "
+        };
+
         let block = Block::default()
-            .title(" Conversation ")
+            .title(title)
             .title_style(Style::default().fg(self.theme.text))
             .borders(Borders::ALL)
             .border_style(border_style)
@@ -206,6 +228,15 @@ impl Widget for ConversationPane<'_> {
 
         let inner = block.inner(area);
         block.render(area, buf);
+
+        // If no input, use full area for timeline
+        if self.input.is_none() {
+            let timeline_widget = TimelineWidget::new(self.timeline, self.theme)
+                .with_border(false)
+                .focused(self.focused);
+            timeline_widget.render(inner, buf);
+            return;
+        }
 
         if inner.height < INPUT_HEIGHT + DIVIDER_HEIGHT + 1 {
             // Not enough space - just show input

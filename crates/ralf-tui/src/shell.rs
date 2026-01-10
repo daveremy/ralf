@@ -1,9 +1,9 @@
 //! M5-A Shell: Core TUI shell implementation.
 //!
 //! This module provides the foundational TUI shell with:
-//! - Two-pane layout (Timeline | Context)
+//! - Three-way focus: Timeline, Context/Canvas, and Input panes
 //! - Status bar and footer hints
-//! - Focus management and screen modes
+//! - Screen modes: Split, Timeline-focus, Context-focus
 //! - Theme and icon support
 //! - Model discovery and probing
 //!
@@ -352,9 +352,25 @@ impl ShellApp {
     /// Check if the timeline pane is currently focused.
     pub fn timeline_focused(&self) -> bool {
         match self.screen_mode {
-            ScreenMode::Split => self.focused_pane == FocusedPane::Timeline,
-            ScreenMode::TimelineFocus => true,
+            ScreenMode::Split | ScreenMode::TimelineFocus => {
+                self.focused_pane == FocusedPane::Timeline
+            }
             ScreenMode::ContextFocus => false,
+        }
+    }
+
+    /// Check if the input area is currently focused.
+    pub fn input_focused(&self) -> bool {
+        self.focused_pane == FocusedPane::Input
+    }
+
+    /// Check if the canvas/context pane is currently focused.
+    pub fn canvas_focused(&self) -> bool {
+        match self.screen_mode {
+            ScreenMode::Split | ScreenMode::ContextFocus => {
+                self.focused_pane == FocusedPane::Context
+            }
+            ScreenMode::TimelineFocus => false,
         }
     }
 
@@ -484,6 +500,98 @@ impl ShellApp {
     fn handle_escape(&mut self) {
         self.input.clear();
         self.reset_autocomplete();
+    }
+
+    /// Handle key event when Timeline pane is focused.
+    ///
+    /// Timeline-specific keybindings:
+    /// - j/k or ↓/↑: Navigate events
+    /// - Enter: Toggle collapse
+    /// - y: Copy selected event
+    /// - g: Jump to top
+    /// - G: Jump to bottom
+    fn handle_timeline_key(&mut self, key: KeyEvent) -> Option<ShellAction> {
+        // Skip if modifier keys are pressed (except Shift for 'G')
+        let has_ctrl_alt = key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+
+        let visible_count = self
+            .timeline
+            .events_per_page(self.timeline_bounds.inner_height as usize);
+
+        match key.code {
+            // j or Down: select next event
+            KeyCode::Char('j') | KeyCode::Down if !has_ctrl_alt => {
+                self.timeline.select_next();
+                self.timeline.ensure_selection_visible(visible_count);
+                None
+            }
+            // k or Up: select previous event
+            KeyCode::Char('k') | KeyCode::Up if !has_ctrl_alt => {
+                self.timeline.select_prev();
+                self.timeline.ensure_selection_visible(visible_count);
+                None
+            }
+            // Enter: toggle collapse on selected event
+            KeyCode::Enter if !has_ctrl_alt => {
+                self.timeline.toggle_collapse();
+                None
+            }
+            // y: copy selected event content
+            KeyCode::Char('y') if !has_ctrl_alt => {
+                if let Some(content) = self.selected_event_content() {
+                    Some(ShellAction::CopyToClipboard(content))
+                } else {
+                    self.show_toast("No event selected");
+                    None
+                }
+            }
+            // g: jump to top
+            KeyCode::Char('g') if !has_ctrl_alt => {
+                self.timeline.jump_to_start();
+                None
+            }
+            // G (Shift+g): jump to bottom
+            KeyCode::Char('G') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.timeline.jump_to_end();
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Handle key event when Canvas/Context pane is focused.
+    ///
+    /// Canvas keybindings are context-sensitive based on what's displayed:
+    /// - When Models panel is showing:
+    ///   - r: Refresh model status
+    ///   - a: Authenticate (if any model needs auth) - M5-B.4
+    ///   - j/k: Navigate model list - M5-B.4
+    ///   - Enter: Enable/disable model - M5-B.4
+    fn handle_canvas_key(&mut self, key: KeyEvent) -> Option<ShellAction> {
+        // Skip if modifier keys are pressed
+        let has_ctrl_alt = key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+
+        // Models panel keybindings
+        if self.show_models_panel {
+            match key.code {
+                // r: refresh model status
+                KeyCode::Char('r') if !has_ctrl_alt && self.probe_complete => {
+                    return Some(ShellAction::RefreshModels);
+                }
+                // a: authenticate (placeholder for future)
+                KeyCode::Char('a') if !has_ctrl_alt => {
+                    self.show_toast("Model authentication not yet implemented");
+                    return None;
+                }
+                _ => {}
+            }
+        }
+
+        None
     }
 
     /// Submit the current input.
@@ -618,43 +726,41 @@ impl ShellApp {
 
         // Focus trap: '/' from anywhere jumps to input and inserts '/'
         if key.code == KeyCode::Char('/') && self.input.is_empty() {
-            self.focused_pane = FocusedPane::Timeline;
+            self.focused_pane = FocusedPane::Input;
             self.input.insert('/');
             return None;
         }
 
-        // Conversation pane keys when focused
-        if self.timeline_focused() {
-            // Try conversation input handling first
-            match self.handle_conversation_key(key) {
-                KeyResult::Handled => return None,
-                KeyResult::Action(action) => return Some(action),
-                KeyResult::NotHandled => {}
+        // Route keys based on focused pane
+        match self.focused_pane {
+            FocusedPane::Input => {
+                // Input pane: all typing goes to input
+                match self.handle_conversation_key(key) {
+                    KeyResult::Handled => return None,
+                    KeyResult::Action(action) => return Some(action),
+                    KeyResult::NotHandled => {}
+                }
             }
+            FocusedPane::Timeline => {
+                // Timeline pane: navigation keys without modifier
+                if let Some(action) = self.handle_timeline_key(key) {
+                    return Some(action);
+                }
+            }
+            FocusedPane::Context => {
+                // Canvas pane: context-sensitive keys
+                if let Some(action) = self.handle_canvas_key(key) {
+                    return Some(action);
+                }
+            }
+        }
 
-            // Timeline navigation (when input didn't handle the key)
-            // Only works with Alt modifier in input-first model
+        // Page keys work in any pane for timeline scrolling (when timeline is visible)
+        if self.screen_mode != ScreenMode::ContextFocus {
             let visible_count = self
                 .timeline
                 .events_per_page(self.timeline_bounds.inner_height as usize);
 
-            if key.modifiers.contains(KeyModifiers::ALT) {
-                match key.code {
-                    KeyCode::Char('j') => {
-                        self.timeline.select_next();
-                        self.timeline.ensure_selection_visible(visible_count);
-                        return None;
-                    }
-                    KeyCode::Char('k') => {
-                        self.timeline.select_prev();
-                        self.timeline.ensure_selection_visible(visible_count);
-                        return None;
-                    }
-                    _ => {}
-                }
-            }
-
-            // Page keys work without modifier
             match key.code {
                 KeyCode::PageUp => {
                     self.timeline.page_up(visible_count);
@@ -687,9 +793,26 @@ impl ShellApp {
             }
         }
 
-        // Tab - toggle focus in split mode
-        if key.code == KeyCode::Tab && self.screen_mode == ScreenMode::Split {
-            self.focused_pane = self.focused_pane.toggle();
+        // Tab - cycle focus (when autocomplete is not active)
+        // Priority: autocomplete (handled above in conversation keys) > focus cycling
+        if key.code == KeyCode::Tab && !self.should_show_autocomplete() {
+            self.focused_pane = self.focused_pane.cycle_for_mode(self.screen_mode);
+            return None;
+        }
+
+        // Shift+Tab - cycle focus backwards
+        if key.code == KeyCode::BackTab {
+            self.focused_pane = self.focused_pane.cycle_prev();
+            // Adjust for screen mode (skip hidden panes)
+            match self.screen_mode {
+                ScreenMode::TimelineFocus if self.focused_pane == FocusedPane::Context => {
+                    self.focused_pane = FocusedPane::Input;
+                }
+                ScreenMode::ContextFocus if self.focused_pane == FocusedPane::Timeline => {
+                    self.focused_pane = FocusedPane::Input;
+                }
+                _ => {}
+            }
             return None;
         }
 
@@ -1168,34 +1291,49 @@ mod tests {
         assert_eq!(app.screen_mode, ScreenMode::Split);
         assert_eq!(app.focused_pane, FocusedPane::Timeline);
 
-        // Tab toggles between left (Timeline) and right (Context/Models) panes
+        // Tab cycles through Timeline → Context → Input → Timeline
         app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(app.focused_pane, FocusedPane::Context);
+
+        app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.focused_pane, FocusedPane::Input);
 
         app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(app.focused_pane, FocusedPane::Timeline);
     }
 
     #[test]
-    fn test_focus_cycling_noop_in_focus_modes() {
+    fn test_focus_cycling_in_timeline_focus_mode() {
         let mut app = ShellApp::new();
         app.screen_mode = ScreenMode::TimelineFocus;
         app.focused_pane = FocusedPane::Timeline;
 
-        // Tab should be a no-op in TimelineFocus mode
+        // Tab cycles Timeline → Input → Timeline (skips Context)
         app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
-        assert_eq!(app.focused_pane, FocusedPane::Timeline);
+        assert_eq!(app.focused_pane, FocusedPane::Input);
 
-        app.screen_mode = ScreenMode::ContextFocus;
-        // Tab should also be a no-op in ContextFocus mode
         app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(app.focused_pane, FocusedPane::Timeline);
+    }
+
+    #[test]
+    fn test_focus_cycling_in_context_focus_mode() {
+        let mut app = ShellApp::new();
+        app.screen_mode = ScreenMode::ContextFocus;
+        app.focused_pane = FocusedPane::Context;
+
+        // Tab cycles Context → Input → Context (skips Timeline)
+        app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.focused_pane, FocusedPane::Input);
+
+        app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_eq!(app.focused_pane, FocusedPane::Context);
     }
 
     #[test]
     fn test_escape_clears_input() {
         let mut app = ShellApp::new();
-        app.focused_pane = FocusedPane::Timeline;
+        app.focused_pane = FocusedPane::Input;
 
         // Type something
         app.handle_key_event(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
@@ -1312,10 +1450,10 @@ mod tests {
     }
 
     #[test]
-    fn test_input_first_all_chars_go_to_input() {
-        // Input-first model: ALL character keys (without Ctrl) go to input
+    fn test_input_focus_all_chars_go_to_input() {
+        // When Input is focused: ALL character keys (without Ctrl) go to input
         let mut app = ShellApp::new();
-        app.focused_pane = FocusedPane::Timeline;
+        app.focused_pane = FocusedPane::Input;
 
         // Type any text - all goes to input
         app.handle_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
@@ -1325,7 +1463,7 @@ mod tests {
         app.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
         assert_eq!(app.input.content(), "hello");
 
-        // Even 'q' goes to input (no reserved keys in input-first model)
+        // Even 'q' goes to input (no reserved keys when input focused)
         app.handle_key_event(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
         assert_eq!(app.input.content(), "helloq");
         assert!(!app.should_quit);
@@ -1338,15 +1476,49 @@ mod tests {
     }
 
     #[test]
-    fn test_focus_trap_slash() {
-        // Input-first model: '/' from anywhere jumps to input
+    fn test_timeline_focus_jk_navigates() {
+        // When Timeline is focused: j/k navigate events, not type
+        let mut app = ShellApp::new();
+        app.focused_pane = FocusedPane::Timeline;
+
+        // j/k should navigate timeline, not type
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+        assert!(app.input.is_empty()); // Did NOT type 'j'
+
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE));
+        assert!(app.input.is_empty()); // Did NOT type 'k'
+    }
+
+    #[test]
+    fn test_canvas_focus_r_refreshes_models() {
+        // When Canvas is focused and models showing: 'r' refreshes
         let mut app = ShellApp::new();
         app.focused_pane = FocusedPane::Context;
+        app.show_models_panel = true;
+        app.probe_complete = true;
+
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE));
+        assert_eq!(action, Some(ShellAction::RefreshModels));
+    }
+
+    #[test]
+    fn test_focus_trap_slash() {
+        // '/' from anywhere jumps to Input focus and inserts '/'
+        let mut app = ShellApp::new();
+        app.focused_pane = FocusedPane::Timeline;
         assert!(app.input.is_empty());
 
         // '/' jumps to input and inserts '/'
         app.handle_key_event(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
         assert_eq!(app.input.content(), "/");
+        assert_eq!(app.focused_pane, FocusedPane::Input);
+
+        // Also works from Context pane
+        app.input.clear();
+        app.focused_pane = FocusedPane::Context;
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        assert_eq!(app.input.content(), "/");
+        assert_eq!(app.focused_pane, FocusedPane::Input);
     }
 
     #[test]
