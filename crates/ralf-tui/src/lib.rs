@@ -579,8 +579,10 @@ mod snapshot_tests {
                     &timeline_state,
                     &input_state,
                     &mut timeline_bounds,
-                    None, // toast
-                    None, // thread (no thread loaded)
+                    None,  // toast
+                    None,  // thread (no thread loaded)
+                    false, // chat_loading
+                    None,  // loading_model
                 );
             })
             .expect("Failed to draw");

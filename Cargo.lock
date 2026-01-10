@@ -1391,6 +1391,8 @@ dependencies = [
  "ralf-engine",
  "ratatui",
  "ratatui-testlib",
+ "serde",
+ "serde_json",
  "tempfile",
  "tokio",
 ]

@@ -2,7 +2,13 @@
 //!
 //! These types wrap engine discovery/probe results for display purposes.
 
+use std::fs;
+use std::io;
+use std::path::Path;
+
 use ralf_engine::discovery::{ModelInfo, ProbeResult};
+use ralf_engine::runner::RunnerError;
+use serde::{Deserialize, Serialize};
 
 /// Install URLs for each model CLI.
 const INSTALL_URLS: &[(&str, &str)] = &[
@@ -12,7 +18,7 @@ const INSTALL_URLS: &[(&str, &str)] = &[
 ];
 
 /// Model state for display.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ModelState {
     /// Currently checking model status.
     Probing,
@@ -63,7 +69,7 @@ impl ModelState {
 }
 
 /// Model status combining discovery and probe results for display.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelStatus {
     /// Model name (e.g., "claude", "codex", "gemini").
     pub name: String,
@@ -179,6 +185,39 @@ impl ModelStatus {
     pub fn is_ready(&self) -> bool {
         matches!(self.state, ModelState::Ready)
     }
+
+    /// Update status based on chat result.
+    ///
+    /// Called after a chat invocation to update state based on success/failure.
+    pub fn update_from_result(&mut self, result: Result<(), &RunnerError>) {
+        match result {
+            Ok(()) => {
+                self.state = ModelState::Ready;
+                self.message = Some("Ready".into());
+            }
+            Err(RunnerError::Timeout(_)) => {
+                self.state = ModelState::Unavailable;
+                self.message = Some("Timeout".into());
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("429") || msg.to_lowercase().contains("rate limit") {
+                    // Default 15 min cooldown
+                    self.state = ModelState::Cooldown(900);
+                    self.message = Some("Rate limited".into());
+                } else if msg.contains("401")
+                    || msg.contains("403")
+                    || msg.to_lowercase().contains("auth")
+                {
+                    self.state = ModelState::Unavailable;
+                    self.message = Some("Auth required".into());
+                } else {
+                    self.state = ModelState::Unavailable;
+                    self.message = Some(msg);
+                }
+            }
+        }
+    }
 }
 
 /// Summary of model statuses for status bar display.
@@ -215,6 +254,26 @@ impl ModelsSummary {
             format!("{}/{} models", self.ready, self.total)
         }
     }
+}
+
+// --- Status cache functions ---
+
+/// Save model status cache to `.ralf/models.json`.
+///
+/// This allows skipping probing on startup if cache is fresh.
+pub fn save_status_cache(models: &[ModelStatus], ralf_dir: &Path) -> io::Result<()> {
+    fs::create_dir_all(ralf_dir)?;
+    let path = ralf_dir.join("models.json");
+    let json = serde_json::to_string_pretty(models)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    fs::write(path, json)
+}
+
+/// Load model status cache from `.ralf/models.json`.
+pub fn load_status_cache(ralf_dir: &Path) -> io::Result<Vec<ModelStatus>> {
+    let path = ralf_dir.join("models.json");
+    let json = fs::read_to_string(path)?;
+    serde_json::from_str(&json).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
 #[cfg(test)]
@@ -346,5 +405,65 @@ mod tests {
 
         assert!(summary.probing);
         assert_eq!(summary.narrow_format(), "Checking...");
+    }
+
+    #[test]
+    fn test_update_from_result_success() {
+        let mut status = ModelStatus::probing("claude");
+        status.update_from_result(Ok(()));
+
+        assert_eq!(status.state, ModelState::Ready);
+        assert_eq!(status.message, Some("Ready".to_string()));
+    }
+
+    #[test]
+    fn test_update_from_result_timeout() {
+        let mut status = ModelStatus::probing("claude");
+        let err = RunnerError::Timeout("claude".to_string());
+        status.update_from_result(Err(&err));
+
+        assert_eq!(status.state, ModelState::Unavailable);
+        assert_eq!(status.message, Some("Timeout".to_string()));
+    }
+
+    #[test]
+    fn test_update_from_result_rate_limit() {
+        let mut status = ModelStatus::probing("claude");
+        let err = RunnerError::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "429 rate limit exceeded",
+        ));
+        status.update_from_result(Err(&err));
+
+        assert!(matches!(status.state, ModelState::Cooldown(900)));
+        assert_eq!(status.message, Some("Rate limited".to_string()));
+    }
+
+    #[test]
+    fn test_status_cache_round_trip() {
+        let models = vec![
+            ModelStatus {
+                name: "claude".to_string(),
+                state: ModelState::Ready,
+                version: Some("1.0.0".to_string()),
+                message: Some("Ready".to_string()),
+            },
+            ModelStatus {
+                name: "codex".to_string(),
+                state: ModelState::Cooldown(300),
+                version: None,
+                message: Some("Rate limited".to_string()),
+            },
+        ];
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        save_status_cache(&models, temp_dir.path()).unwrap();
+
+        let loaded = load_status_cache(temp_dir.path()).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].name, "claude");
+        assert_eq!(loaded[0].state, ModelState::Ready);
+        assert_eq!(loaded[1].name, "codex");
+        assert!(matches!(loaded[1].state, ModelState::Cooldown(300)));
     }
 }
