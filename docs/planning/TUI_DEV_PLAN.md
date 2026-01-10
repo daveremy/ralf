@@ -397,9 +397,9 @@ Add the input area to the conversation pane (left), making the timeline interact
 
 **Exit Criteria:** ✓ Can type in the input area, input is visually part of the timeline, focus switches between panes.
 
-##### M5-B.3a': Slash Command Infrastructure
+##### M5-B.3a': Slash Command Infrastructure ✓
 **Spec:** `SPEC-slash-commands.md`
-**Status:** In Progress (2026-01-09)
+**Status:** Complete (2026-01-09)
 
 Implement the slash command system for TUI actions. All actions available via `/command` syntax.
 
@@ -413,20 +413,15 @@ The initial M5-B.3a implementation revealed a UX conflict: reserved keys (q=quit
 - ✓ Focus trap: `/` from any pane jumps to input
 - ✓ `F1` for help overlay
 - ✓ Phase-specific command stubs: `/approve`, `/reject`, `/pause`, `/resume`, `/cancel`, `/finalize`, `/assess`
+- ✓ Click-to-focus for panes
+- ✓ Esc only clears input (use `/quit` to exit)
+- ✓ Help overlay with keyboard shortcuts
 
-**Fixes before merge (from manual testing):**
-- Remove Esc-to-quit (Esc only clears input)
-- Remove Ctrl+C for copy (wrong convention, use `/copy` or `y`)
-- Add click-to-focus for panes
-- Change Ctrl+1/2/3 to Alt+1/2/3 (Mac compatibility)
-- Make `/exit` visible in autocomplete
-- Polish help overlay formatting
-
-**Exit Criteria:** Can use `/help` to see commands, slash commands execute actions, typing is never blocked.
+**Exit Criteria:** ✓ Can use `/help` to see commands, slash commands execute actions, typing is never blocked.
 
 ##### M5-B.3a'': Focus Model & Layout Rework
-**Spec:** `SPEC-m5b3a-focus-model.md` (to be written)
-**Status:** Planned
+**Spec:** `SPEC-m5b3a-focus-layout.md`
+**Status:** Complete (2026-01-09)
 
 Rework the focus model and layout based on manual testing feedback. This addresses UX issues discovered in M5-B.3a' testing.
 
@@ -463,14 +458,15 @@ Manual testing of M5-B.3a' revealed several UX issues:
 ```
 
 **Deliverables:**
-- Full-width input bar (visible in all modes)
-- Remove footer hints, add minimal status bar at bottom
-- Explicit focus model with Tab cycling
-- Click-to-focus for panes
-- Pane-specific keybindings (j/k, y in timeline)
-- Context-aware status (mode, focus, thread state)
+- ✓ Full-width input bar (visible in all modes)
+- ✓ Minimal status bar at bottom (mode, focus, phase, pane-specific hints)
+- ✓ Three-way focus model with Tab cycling (Timeline → Canvas → Input)
+- ✓ Click-to-focus for panes
+- ✓ Pane-specific keybindings (j/k, y in timeline; r in canvas; typing in input)
+- ✓ Context-aware status (mode, focus, thread state)
+- ✓ Toast notification when y pressed with no selection
 
-**Exit Criteria:** Can navigate timeline with j/k when focused, input always accessible, clean minimal UI like Claude Code.
+**Exit Criteria:** ✓ Can navigate timeline with j/k when focused, input always accessible, clean minimal UI like Claude Code.
 
 **Future: Kitty Keyboard Protocol**
 Consider adding [Kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) support for enhanced keybinding detection. Benefits:
@@ -607,6 +603,7 @@ Add the activity visibility features that make autonomous runs tangible. Polish 
 - Help overlay (?)
 - NO_COLOR support
 - Full keyboard navigation audit
+- Mouse text selection (allow selecting text in timeline/canvas for copy)
 - Error state handling
 
 **Exit Criteria:** Run an autonomous loop and feel the activity. New user can learn the UI without docs.
@@ -625,9 +622,9 @@ M5-B (Conversation & Artifacts)
   ├── M5-B.2 (Phase Router & Dynamic Status) ✓
   ├── M5-B.3 (Conversation & Spec Flow)
   │   ├── M5-B.3a (Timeline Input) ✓
-  │   ├── M5-B.3a' (Slash Commands) ← IN PROGRESS
-  │   ├── M5-B.3a'' (Focus Model & Layout Rework)
-  │   ├── M5-B.3b (Chat Integration)
+  │   ├── M5-B.3a' (Slash Commands) ✓
+  │   ├── M5-B.3a'' (Focus Model & Layout Rework) ✓
+  │   ├── M5-B.3b (Chat Integration) ← NEXT
   │   ├── M5-B.3c (Spec Artifact View)
   │   └── M5-B.3d (Run Artifact Views)
   ├── M5-B.4 (Advanced Artifact Views)
@@ -801,3 +798,4 @@ crates/ralf-tui/src/
 | 2026-01-09 | Added M5-B.5 (Thread Management) for CLI flags (-c, -r) and TUI thread picker. Improves on Claude Code with named threads. |
 | 2026-01-09 | Added M5-B.3a'' (Focus Model & Layout Rework) based on manual testing feedback. Decisions: full-width input bar, status bar at bottom replacing footer hints, explicit focus model with pane-specific keybindings. |
 | 2026-01-09 | Added Kitty keyboard protocol as future consideration in M5-B.3a'' for Command+1/2/3 on Mac and enhanced modifier detection. |
+| 2026-01-09 | Completed M5-B.3a'' (Focus Model & Layout Rework): three-way focus, full-width input, pane-specific keybindings, toast notifications. Added mouse text selection to M5-C polish items. |

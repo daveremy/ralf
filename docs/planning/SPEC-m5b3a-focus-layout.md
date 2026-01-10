@@ -57,8 +57,18 @@ When **Timeline** is focused:
 - `g` - Jump to top
 - `G` - Jump to bottom
 
-When **Canvas** is focused:
-- Context-specific (TBD per phase)
+When **Canvas** is focused (context-sensitive):
+- Keybindings change based on what Canvas is showing
+- **Models Panel:**
+  - `r` - Refresh model status
+  - `a` - Authenticate (if any model needs auth)
+  - `j/k` or `↓/↑` - Navigate model list
+  - `Enter` - Select/toggle model
+- **Diff View (future):**
+  - `a` - Approve changes
+  - `r` - Reject changes
+  - `j/k` - Navigate hunks
+- Other content types: TBD per phase
 
 When **Input** is focused:
 - Normal typing
@@ -91,13 +101,14 @@ Components:
 - [ ] Remove footer hints widget
 - [ ] Add minimal bottom status bar
 - [ ] Three-way focus cycling (Timeline/Canvas/Input)
-- [ ] Pane-specific keybindings for Timeline (j/k, y, Enter)
+- [ ] Pane-specific keybindings for Timeline (j/k, y, g/G, Enter)
+- [ ] Canvas keybindings for Models panel (r for refresh, a for auth)
 - [ ] Visual focus indicators on pane borders
 - [ ] Update screen modes to show input in all modes
 
 ## Non-Goals
 
-- Canvas-specific keybindings (defer to phase implementations)
+- Phase-specific Canvas keybindings like Diff view (defer to phase implementations)
 - Input history (separate feature)
 - Kitty keyboard protocol (future enhancement)
 
@@ -107,6 +118,7 @@ Components:
 2. Tab cycles focus through Timeline → Canvas → Input
 3. j/k navigates timeline when Timeline is focused
 4. j/k types "jk" when Input is focused
-5. Focus state clearly visible via border colors
-6. Bottom status bar shows mode, focus, and phase
-7. All existing slash commands still work
+5. r refreshes models when Canvas is focused and showing models
+6. Focus state clearly visible via border colors
+7. Bottom status bar shows mode, focus, and phase
+8. All existing slash commands still work

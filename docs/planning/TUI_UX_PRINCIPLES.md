@@ -375,6 +375,75 @@ Phase-specific actions are available via slash commands (see `/help`).
 
 ---
 
+## Context-Sensitive Pane Keybindings
+
+When a pane has focus, its available keybindings change based on what content is being displayed. This allows intuitive, memorable keys that adapt to context.
+
+### Principle
+
+The same key can mean different things in different contexts:
+- `r` in Timeline might mean "replay" an event
+- `r` in Canvas showing Models might mean "refresh" model status
+- `r` in Canvas showing a Diff might mean "reject" the change
+
+This follows the pattern of tools like vim, lazygit, and k9s where keybindings are context-aware.
+
+### Guidelines
+
+1. **Single-letter keys for frequent actions** - `r`, `a`, `y`, `g`, `G` etc.
+2. **Consistent mnemonics** - `r` for refresh/reject, `a` for approve/auth, `y` for yank/copy
+3. **Show available keys in status bar** - Current pane's keybindings visible
+4. **Fallthrough to global** - If no pane-specific binding, check global keybindings
+5. **Never capture typing keys when Input focused** - Plain letters always type
+
+### Example: Timeline Pane
+
+When Timeline is focused:
+| Key | Action |
+|-----|--------|
+| `j/k` | Navigate events |
+| `Enter` | Toggle collapse |
+| `y` | Copy selected event |
+| `g` | Jump to top |
+| `G` | Jump to bottom |
+
+### Example: Canvas Pane (Models Panel)
+
+When Canvas is focused and showing Models:
+| Key | Action |
+|-----|--------|
+| `r` | Refresh model status |
+| `a` | Authenticate (if any model needs auth) |
+| `j/k` | Navigate model list |
+| `Enter` | Select/toggle model |
+
+### Example: Canvas Pane (Diff View)
+
+When Canvas is focused and showing a Diff:
+| Key | Action |
+|-----|--------|
+| `a` | Approve changes |
+| `r` | Reject changes |
+| `j/k` | Navigate hunks |
+| `y` | Copy current hunk |
+
+### Implementation Pattern
+
+The shell maintains:
+1. `focused_pane: FocusedPane` - Which pane has focus (Timeline, Canvas, Input)
+2. `canvas_content: CanvasContent` - What the Canvas is showing (Models, Diff, Spec, etc.)
+
+Key handling follows this priority:
+1. If Input focused → all non-modifier keys go to input
+2. If autocomplete open → Tab/Enter/Escape go to autocomplete
+3. Check pane-specific + content-specific keybindings
+4. Check global keybindings
+5. Ignore unknown keys
+
+**Rationale:** Context-sensitive keybindings reduce cognitive load by showing only relevant actions and using intuitive mnemonics. Users learn "r means refresh here" without memorizing dozens of unique key combinations.
+
+---
+
 ## Footer Keybinding Hints
 
 The bottom of the screen displays context-sensitive hints:
@@ -631,6 +700,7 @@ Users can disable toasts or heartbeat if they find them distracting.
 | Screen mode keys | Ctrl+1/2/3 (not plain 1/2/3) | Plain keys go to input, modifiers for actions |
 | Quit | Escape cascade | Clear → Cancel → Quit progression |
 | Model switching | `/model` command | Ctrl+M removed; slash command takes argument |
+| Pane keybindings | Context-sensitive | Same key means different things per pane/content |
 
 ---
 

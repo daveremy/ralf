@@ -1,9 +1,12 @@
-//! Footer hints widget for keybinding display.
+//! Footer status bar widget.
 //!
-//! Uses input-first model format: `[/] Commands │ [Esc] Clear/Quit │ [Tab] Focus`
+//! Minimal status bar format: `Split │ Timeline │ Drafting            [Tab] focus │ [?] help`
 //!
-//! The [`hints_for_state`] function generates phase-aware hints that change
-//! based on the current thread phase and focused pane.
+//! Components:
+//! - Screen mode (Split/Timeline/Canvas)
+//! - Focused pane name (Timeline/Canvas/Input)
+//! - Thread phase (if any)
+//! - Minimal hints (Tab for focus, ? for help)
 
 use ralf_engine::thread::PhaseKind;
 use ratatui::{
@@ -36,16 +39,48 @@ impl KeyHint {
     }
 }
 
-/// Footer hints widget.
+/// Footer status bar widget.
+///
+/// Shows: `Mode │ Focus │ Phase            [Tab] focus │ [?] help`
 pub struct FooterHints<'a> {
     hints: &'a [KeyHint],
     theme: &'a Theme,
+    screen_mode: Option<ScreenMode>,
+    focused_pane: Option<FocusedPane>,
+    phase: Option<PhaseKind>,
 }
 
 impl<'a> FooterHints<'a> {
     /// Create a new footer hints widget.
     pub fn new(hints: &'a [KeyHint], theme: &'a Theme) -> Self {
-        Self { hints, theme }
+        Self {
+            hints,
+            theme,
+            screen_mode: None,
+            focused_pane: None,
+            phase: None,
+        }
+    }
+
+    /// Set screen mode to display.
+    #[must_use]
+    pub fn screen_mode(mut self, mode: ScreenMode) -> Self {
+        self.screen_mode = Some(mode);
+        self
+    }
+
+    /// Set focused pane to display.
+    #[must_use]
+    pub fn focused_pane(mut self, pane: FocusedPane) -> Self {
+        self.focused_pane = Some(pane);
+        self
+    }
+
+    /// Set phase to display.
+    #[must_use]
+    pub fn phase(mut self, phase: Option<PhaseKind>) -> Self {
+        self.phase = phase;
+        self
     }
 
     /// Get the default hints for the shell (input-first model).
@@ -59,27 +94,108 @@ impl<'a> FooterHints<'a> {
             KeyHint::new("F1", "Help"),
         ]
     }
+
+    /// Get minimal hints for the status bar.
+    pub fn minimal_hints() -> Vec<KeyHint> {
+        vec![
+            KeyHint::new("Tab", "focus"),
+            KeyHint::new("?", "help"),
+        ]
+    }
+
+    /// Get pane-specific hints based on focused pane.
+    pub fn pane_hints(focused: FocusedPane, show_models_panel: bool) -> Vec<KeyHint> {
+        match focused {
+            FocusedPane::Timeline => vec![
+                KeyHint::new("j/k", "navigate"),
+                KeyHint::new("y", "copy"),
+                KeyHint::new("Tab", "focus"),
+            ],
+            FocusedPane::Context => {
+                if show_models_panel {
+                    vec![
+                        KeyHint::new("r", "refresh"),
+                        KeyHint::new("Tab", "focus"),
+                    ]
+                } else {
+                    vec![
+                        KeyHint::new("Tab", "focus"),
+                        KeyHint::new("?", "help"),
+                    ]
+                }
+            }
+            FocusedPane::Input => vec![
+                KeyHint::new("Enter", "send"),
+                KeyHint::new("/", "commands"),
+                KeyHint::new("Tab", "focus"),
+            ],
+        }
+    }
 }
 
 impl Widget for FooterHints<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let mut spans = Vec::new();
+        let mut left_spans = Vec::new();
+        let mut right_spans = Vec::new();
 
+        // Left side: Mode │ Focus │ Phase
+        if let Some(mode) = self.screen_mode {
+            let mode_str = match mode {
+                ScreenMode::Split => "Split",
+                ScreenMode::TimelineFocus => "Timeline",
+                ScreenMode::ContextFocus => "Canvas",
+            };
+            left_spans.push(Span::styled(mode_str, Style::default().fg(self.theme.subtext)));
+        }
+
+        if let Some(pane) = self.focused_pane {
+            if !left_spans.is_empty() {
+                left_spans.push(Span::styled(" │ ", Style::default().fg(self.theme.muted)));
+            }
+            let pane_str = match pane {
+                FocusedPane::Timeline => "Timeline",
+                FocusedPane::Context => "Canvas",
+                FocusedPane::Input => "Input",
+            };
+            left_spans.push(Span::styled(pane_str, Style::default().fg(self.theme.primary)));
+        }
+
+        if let Some(phase) = self.phase {
+            left_spans.push(Span::styled(" │ ", Style::default().fg(self.theme.muted)));
+            let phase_str = format!("{phase:?}");
+            left_spans.push(Span::styled(phase_str, Style::default().fg(self.theme.subtext)));
+        }
+
+        // Right side: hints (rendered right-aligned)
         for (i, hint) in self.hints.iter().enumerate() {
             if i > 0 {
-                spans.push(Span::styled(" │ ", Style::default().fg(self.theme.muted)));
+                right_spans.push(Span::styled(" │ ", Style::default().fg(self.theme.muted)));
             }
 
             // Key in brackets
-            spans.push(Span::styled("[", Style::default().fg(self.theme.muted)));
-            spans.push(Span::styled(&hint.key, Style::default().fg(self.theme.primary)));
-            spans.push(Span::styled("] ", Style::default().fg(self.theme.muted)));
+            right_spans.push(Span::styled("[", Style::default().fg(self.theme.muted)));
+            right_spans.push(Span::styled(&hint.key, Style::default().fg(self.theme.primary)));
+            right_spans.push(Span::styled("] ", Style::default().fg(self.theme.muted)));
 
             // Action
-            spans.push(Span::styled(&hint.action, Style::default().fg(self.theme.subtext)));
+            right_spans.push(Span::styled(&hint.action, Style::default().fg(self.theme.subtext)));
         }
 
-        let line = Line::from(spans);
+        // Calculate widths for alignment
+        let left_width: usize = left_spans.iter().map(|s| s.content.len()).sum();
+        let right_width: usize = right_spans.iter().map(|s| s.content.len()).sum();
+        let total_width = area.width as usize;
+
+        // Add padding between left and right
+        let padding = total_width.saturating_sub(left_width + right_width);
+        if padding > 0 {
+            left_spans.push(Span::raw(" ".repeat(padding)));
+        }
+
+        // Combine left and right spans
+        left_spans.extend(right_spans);
+
+        let line = Line::from(left_spans);
         let paragraph = Paragraph::new(line).style(Style::default().bg(self.theme.surface));
         paragraph.render(area, buf);
     }
@@ -126,13 +242,21 @@ fn hints_for_focus(
     // Pane-specific hints first (using modifier keys for input-first model)
     match focused {
         FocusedPane::Timeline => {
-            hints.push(KeyHint::new("Alt+j/k", "Navigate"));
-            hints.push(KeyHint::new("Enter", "Send/Toggle"));
-            hints.push(KeyHint::new("Ctrl+C", "Copy"));
+            hints.push(KeyHint::new("j/k", "Navigate"));
+            hints.push(KeyHint::new("Enter", "Toggle"));
+            hints.push(KeyHint::new("y", "Copy"));
         }
         FocusedPane::Context => {
-            // Context hints depend on phase (use slash commands)
-            hints.extend(context_hints_for_phase(phase));
+            // Context hints depend on what's showing
+            if show_models_panel {
+                hints.push(KeyHint::new("r", "Refresh"));
+            } else {
+                hints.extend(context_hints_for_phase(phase));
+            }
+        }
+        FocusedPane::Input => {
+            hints.push(KeyHint::new("Enter", "Send"));
+            hints.push(KeyHint::new("Shift+Enter", "Newline"));
         }
     }
 
@@ -232,15 +356,9 @@ mod tests {
     fn test_hints_for_state_no_thread_context_focus() {
         let hints = hints_for_state(None, ScreenMode::ContextFocus, FocusedPane::Context, true);
 
-        // Should have send message hint
-        assert!(hints
-            .iter()
-            .any(|h| h.key == "Enter" && h.action == "Send message"));
-        // Should have refresh when models panel showing and no thread
-        assert!(hints
-            .iter()
-            .any(|h| h.key == "Ctrl+R" && h.action == "Refresh"));
-        // Common hints (input-first model)
+        // Should have refresh hint when models panel showing
+        assert!(hints.iter().any(|h| h.key == "r" && h.action == "Refresh"));
+        // Common hints
         assert!(hints.iter().any(|h| h.key == "/" && h.action == "Commands"));
         assert!(hints
             .iter()
@@ -254,18 +372,14 @@ mod tests {
         let hints = hints_for_state(
             Some(PhaseKind::Running),
             ScreenMode::TimelineFocus,
-            FocusedPane::Context, // Ignored in TimelineFocus mode
+            FocusedPane::Timeline, // Timeline focused
             false,
         );
 
-        // Timeline hints should appear (with modifier keys)
-        assert!(hints
-            .iter()
-            .any(|h| h.key == "Alt+j/k" && h.action == "Navigate"));
-        assert!(hints
-            .iter()
-            .any(|h| h.key == "Enter" && h.action == "Send/Toggle"));
-        assert!(hints.iter().any(|h| h.key == "Ctrl+C" && h.action == "Copy"));
+        // Timeline hints should appear (no modifier needed when Timeline focused)
+        assert!(hints.iter().any(|h| h.key == "j/k" && h.action == "Navigate"));
+        assert!(hints.iter().any(|h| h.key == "Enter" && h.action == "Toggle"));
+        assert!(hints.iter().any(|h| h.key == "y" && h.action == "Copy"));
     }
 
     #[test]
@@ -277,15 +391,22 @@ mod tests {
             FocusedPane::Timeline,
             false,
         );
-        assert!(hints
-            .iter()
-            .any(|h| h.key == "Alt+j/k" && h.action == "Navigate"));
+        assert!(hints.iter().any(|h| h.key == "j/k" && h.action == "Navigate"));
 
-        // Context focused in split mode
+        // Context focused in split mode (with phase, not models panel)
         let hints = hints_for_state(
             Some(PhaseKind::Drafting),
             ScreenMode::Split,
             FocusedPane::Context,
+            false,
+        );
+        assert!(hints.iter().any(|h| h.key == "Enter" && h.action == "Send"));
+
+        // Input focused in split mode
+        let hints = hints_for_state(
+            Some(PhaseKind::Drafting),
+            ScreenMode::Split,
+            FocusedPane::Input,
             false,
         );
         assert!(hints.iter().any(|h| h.key == "Enter" && h.action == "Send"));
