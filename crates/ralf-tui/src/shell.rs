@@ -1899,4 +1899,163 @@ mod tests {
             matches!(&e.kind, EventKind::Spec(spec) if spec.is_user && spec.content.contains("test message"))
         }));
     }
+
+    // ========================================================================
+    // Integration Tests - Full Event Sequences
+    // ========================================================================
+
+    /// Test full input submission flow: type → enter → chat initiated
+    #[tokio::test]
+    async fn test_integration_type_and_submit() {
+        let mut app = ShellApp::new();
+        app.models[0].state = crate::models::ModelState::Ready;
+
+        // Type "hello" character by character
+        for c in "hello".chars() {
+            app.handle_key_event(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        assert_eq!(app.input.content(), "hello");
+
+        // Press Enter to submit
+        app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        // Input should be cleared
+        assert!(app.input.is_empty());
+        // Chat should be loading
+        assert!(app.chat_loading);
+        // User message in timeline
+        assert!(app.timeline.events().iter().any(|e| {
+            matches!(&e.kind, EventKind::Spec(spec) if spec.content == "hello")
+        }));
+    }
+
+    /// Test that input is blocked while chat is loading
+    #[tokio::test]
+    async fn test_integration_input_blocked_while_loading() {
+        let mut app = ShellApp::new();
+        app.models[0].state = crate::models::ModelState::Ready;
+
+        // Send first message
+        app.send_chat_message("first");
+        assert!(app.chat_loading);
+        let initial_timeline_len = app.timeline.events().len();
+
+        // Try to send another message while loading
+        app.send_chat_message("second");
+
+        // Should have toast about waiting
+        assert!(app.toast.is_some());
+        assert!(app.toast.as_ref().unwrap().message.contains("Waiting"));
+        // Timeline should NOT have second message
+        assert_eq!(app.timeline.events().len(), initial_timeline_len);
+    }
+
+    /// Test focus cycling doesn't interfere with chat state
+    #[tokio::test]
+    async fn test_integration_focus_cycle_during_chat() {
+        let mut app = ShellApp::new();
+        app.models[0].state = crate::models::ModelState::Ready;
+
+        // Start a chat
+        app.send_chat_message("test");
+        assert!(app.chat_loading);
+
+        // Cycle focus with Tab
+        let initial_focus = app.focused_pane;
+        app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        assert_ne!(app.focused_pane, initial_focus);
+
+        // Chat state should be preserved
+        assert!(app.chat_loading);
+        assert!(app.chat_thread.is_some());
+    }
+
+    /// Test escape clears input but doesn't affect chat state
+    #[tokio::test]
+    async fn test_integration_escape_during_chat() {
+        let mut app = ShellApp::new();
+        app.models[0].state = crate::models::ModelState::Ready;
+
+        // Start a chat
+        app.send_chat_message("test");
+        assert!(app.chat_loading);
+
+        // Type something new
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
+        assert_eq!(app.input.content(), "x");
+
+        // Escape clears input
+        app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.input.is_empty());
+
+        // Chat state preserved
+        assert!(app.chat_loading);
+        assert!(!app.should_quit);
+    }
+
+    /// Test slash command during chat loading
+    #[test]
+    fn test_integration_slash_command_during_loading() {
+        let mut app = ShellApp::new();
+        app.chat_loading = true;
+
+        // Type /help
+        for c in "/help".chars() {
+            app.handle_key_event(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        // Help should still work during loading
+        assert!(app.show_help);
+        // Chat loading preserved
+        assert!(app.chat_loading);
+    }
+
+    /// Test thread creation and models panel hiding
+    #[tokio::test]
+    async fn test_integration_thread_hides_models_panel() {
+        let mut app = ShellApp::new();
+        app.models[0].state = crate::models::ModelState::Ready;
+        assert!(app.show_models_panel); // Initially visible
+
+        // Send message creates thread
+        app.send_chat_message("hello");
+
+        // Models panel should be hidden when thread is active
+        assert!(!app.show_models_panel);
+        assert!(app.chat_thread.is_some());
+    }
+
+    /// Test poll_chat_response with no active chat
+    #[test]
+    fn test_integration_poll_without_chat() {
+        let mut app = ShellApp::new();
+
+        // Polling without active chat should not panic
+        app.poll_chat_response();
+
+        // State unchanged
+        assert!(!app.chat_loading);
+        assert!(app.chat_thread.is_none());
+    }
+
+    /// Test multiple messages build conversation
+    #[tokio::test]
+    async fn test_integration_conversation_builds() {
+        let mut app = ShellApp::new();
+        app.models[0].state = crate::models::ModelState::Ready;
+
+        // First message
+        app.send_chat_message("hello");
+        let thread = app.chat_thread.as_ref().unwrap();
+        assert_eq!(thread.messages.len(), 1);
+
+        // Simulate response received (clear loading state)
+        app.chat_loading = false;
+
+        // Second message
+        app.send_chat_message("how are you");
+        let thread = app.chat_thread.as_ref().unwrap();
+        assert_eq!(thread.messages.len(), 2);
+    }
 }
