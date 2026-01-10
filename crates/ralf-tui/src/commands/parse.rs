@@ -74,30 +74,37 @@ pub static COMMANDS: &[CommandInfo] = &[
     },
     CommandInfo {
         name: "quit",
-        aliases: &["q", "exit"],
+        aliases: &["q"],
         description: "Exit ralf",
-        keybinding: Some("Esc"),
+        keybinding: None,
+        phase_specific: false,
+    },
+    CommandInfo {
+        name: "exit",
+        aliases: &[],
+        description: "Exit ralf",
+        keybinding: None,
         phase_specific: false,
     },
     CommandInfo {
         name: "split",
         aliases: &["1"],
         description: "Split view mode",
-        keybinding: Some("Ctrl+1"),
+        keybinding: Some("Alt+1"),
         phase_specific: false,
     },
     CommandInfo {
         name: "focus",
         aliases: &["2"],
         description: "Focus conversation mode",
-        keybinding: Some("Ctrl+2"),
+        keybinding: Some("Alt+2"),
         phase_specific: false,
     },
     CommandInfo {
         name: "canvas",
         aliases: &["3"],
         description: "Focus canvas mode",
-        keybinding: Some("Ctrl+3"),
+        keybinding: Some("Alt+3"),
         phase_specific: false,
     },
     CommandInfo {
@@ -360,11 +367,11 @@ mod tests {
         // Verify registry has expected entries
         assert!(COMMANDS.iter().any(|c| c.name == "help"));
         assert!(COMMANDS.iter().any(|c| c.name == "quit"));
+        assert!(COMMANDS.iter().any(|c| c.name == "exit"));
         assert!(COMMANDS.iter().any(|c| c.name == "approve" && c.phase_specific));
 
         // Verify aliases are set up
         let quit_cmd = COMMANDS.iter().find(|c| c.name == "quit").unwrap();
         assert!(quit_cmd.aliases.contains(&"q"));
-        assert!(quit_cmd.aliases.contains(&"exit"));
     }
 }

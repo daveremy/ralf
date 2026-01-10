@@ -381,8 +381,12 @@ impl ShellApp {
                 KeyResult::Handled
             }
 
-            // Text input - characters without ctrl modifier go to input
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Text input - characters without ctrl/alt modifier go to input
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
                 self.input.insert(c);
                 self.reset_autocomplete(); // Reset on text change
                 KeyResult::Handled
@@ -476,14 +480,10 @@ impl ShellApp {
         }
     }
 
-    /// Escape cascade: clear input, then quit.
-    fn escape_cascade(&mut self) {
-        if self.input.is_empty() {
-            self.should_quit = true;
-        } else {
-            self.input.clear();
-            self.reset_autocomplete();
-        }
+    /// Escape: clear input (no longer quits - use /quit or /exit).
+    fn handle_escape(&mut self) {
+        self.input.clear();
+        self.reset_autocomplete();
     }
 
     /// Submit the current input.
@@ -610,9 +610,9 @@ impl ShellApp {
             return None;
         }
 
-        // Escape cascade (clear input, then quit)
+        // Escape clears input (use /quit or /exit to quit)
         if key.code == KeyCode::Esc {
-            self.escape_cascade();
+            self.handle_escape();
             return None;
         }
 
@@ -670,10 +670,10 @@ impl ShellApp {
             }
         }
 
-        // Global keybindings with Ctrl modifier
-        if key.modifiers.contains(KeyModifiers::CONTROL) {
+        // Global keybindings with Alt modifier (works better cross-platform)
+        if key.modifiers.contains(KeyModifiers::ALT) {
             match key.code {
-                // Screen modes: Ctrl+1/2/3
+                // Screen modes: Alt+1/2/3
                 KeyCode::Char('1') => {
                     self.screen_mode = ScreenMode::Split;
                     return None;
@@ -686,6 +686,13 @@ impl ShellApp {
                     self.screen_mode = ScreenMode::ContextFocus;
                     return None;
                 }
+                _ => {}
+            }
+        }
+
+        // Global keybindings with Ctrl modifier
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
                 // Refresh: Ctrl+R
                 KeyCode::Char('r') if self.show_models_panel && self.probe_complete => {
                     return Some(ShellAction::RefreshModels);
@@ -695,13 +702,7 @@ impl ShellApp {
                     self.timeline.clear();
                     return None;
                 }
-                // Copy: Ctrl+C
-                KeyCode::Char('c') => {
-                    if let Some(content) = self.selected_event_content() {
-                        return Some(ShellAction::CopyToClipboard(content));
-                    }
-                    return None;
-                }
+                // Note: Ctrl+C intentionally NOT mapped - reserved for terminal interrupt
                 _ => {}
             }
         }
@@ -717,11 +718,6 @@ impl ShellApp {
 
     /// Handle mouse input.
     pub fn handle_mouse_event(&mut self, mouse: MouseEvent) {
-        // Only handle mouse events when timeline is focused
-        if !self.timeline_focused() {
-            return;
-        }
-
         let bounds = &self.timeline_bounds;
 
         // Check if click is within timeline pane bounds
@@ -730,49 +726,66 @@ impl ShellApp {
             && mouse.row >= bounds.inner_y
             && mouse.row < bounds.inner_y + bounds.inner_height;
 
+        // Check if click is within context pane (in split mode)
+        // Context pane starts after timeline ends and goes to the right edge
+        let in_context = self.screen_mode == ScreenMode::Split
+            && mouse.column >= bounds.inner_x + bounds.inner_width
+            && mouse.row >= bounds.inner_y
+            && mouse.row < bounds.inner_y + bounds.inner_height;
+
         match mouse.kind {
             MouseEventKind::ScrollUp => {
-                if in_timeline {
+                // Only scroll when timeline is focused and click is in timeline
+                if self.timeline_focused() && in_timeline {
                     self.timeline.scroll_up(SCROLL_SPEED);
                 }
             }
             MouseEventKind::ScrollDown => {
-                if in_timeline {
+                // Only scroll when timeline is focused and click is in timeline
+                if self.timeline_focused() && in_timeline {
                     self.timeline.scroll_down(SCROLL_SPEED);
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {
-                if !in_timeline {
-                    return;
-                }
-
-                let now = Instant::now();
-
-                // Check for double-click
-                let is_double_click = self.last_click.is_some_and(|last| {
-                    now.duration_since(last.time) < DOUBLE_CLICK_THRESHOLD
-                        && mouse.row == last.row
-                        && mouse.column == last.column
-                });
-
-                // Convert to relative y coordinate within timeline inner area
-                let relative_y = (mouse.row - bounds.inner_y) as usize;
-
-                if let Some(idx) = self.timeline.y_to_event_index(relative_y) {
-                    self.timeline.select(idx);
-
-                    if is_double_click {
-                        self.timeline.toggle_collapse();
-                        self.last_click = None; // Reset after double-click
+                // Click-to-focus: clicking on a pane focuses it
+                if self.screen_mode == ScreenMode::Split {
+                    if in_timeline && self.focused_pane != FocusedPane::Timeline {
+                        self.focused_pane = FocusedPane::Timeline;
+                    } else if in_context && self.focused_pane != FocusedPane::Context {
+                        self.focused_pane = FocusedPane::Context;
                     }
                 }
 
-                if !is_double_click {
-                    self.last_click = Some(LastClick {
-                        time: now,
-                        row: mouse.row,
-                        column: mouse.column,
+                // Timeline selection only when clicking in timeline
+                if in_timeline && self.timeline_focused() {
+                    let now = Instant::now();
+
+                    // Check for double-click
+                    let is_double_click = self.last_click.is_some_and(|last| {
+                        now.duration_since(last.time) < DOUBLE_CLICK_THRESHOLD
+                            && mouse.row == last.row
+                            && mouse.column == last.column
                     });
+
+                    // Convert to relative y coordinate within timeline inner area
+                    let relative_y = (mouse.row - bounds.inner_y) as usize;
+
+                    if let Some(idx) = self.timeline.y_to_event_index(relative_y) {
+                        self.timeline.select(idx);
+
+                        if is_double_click {
+                            self.timeline.toggle_collapse();
+                            self.last_click = None; // Reset after double-click
+                        }
+                    }
+
+                    if !is_double_click {
+                        self.last_click = Some(LastClick {
+                            time: now,
+                            row: mouse.row,
+                            column: mouse.column,
+                        });
+                    }
                 }
             }
             _ => {}
@@ -845,30 +858,48 @@ fn render_help_overlay(area: Rect, buf: &mut Buffer, theme: &Theme) {
     use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
     // Build help text from commands registry
-    let mut help_lines = vec![
-        "  Slash Commands".to_string(),
-        "  ──────────────".to_string(),
-    ];
+    // Format: /command [alias]  Description  (Keybinding)
+    let mut help_lines: Vec<String> = Vec::new();
+
+    help_lines.push("Commands".to_string());
+    help_lines.push(String::new());
 
     for cmd in COMMANDS.iter().filter(|c| !c.phase_specific) {
-        let keybind = cmd.keybinding.map_or(String::new(), |k| format!(" ({k})"));
-        let aliases = if cmd.aliases.is_empty() {
-            String::new()
+        // Build command with alias: "/quit [q]" or just "/help"
+        let cmd_str = if cmd.aliases.is_empty() {
+            format!("/{}", cmd.name)
         } else {
-            format!(" [{}]", cmd.aliases.join(", "))
+            format!("/{}  [{}]", cmd.name, cmd.aliases.join(", "))
         };
-        help_lines.push(format!("  /{}{}{}", cmd.name, aliases, keybind));
-        help_lines.push(format!("    {}", cmd.description));
+
+        // Pad command to align descriptions
+        let padded_cmd = format!("{cmd_str:<18}");
+
+        // Add keybinding at end if present
+        let line = if let Some(key) = cmd.keybinding {
+            format!("  {}  {}  ({})", padded_cmd, cmd.description, key)
+        } else {
+            format!("  {}  {}", padded_cmd, cmd.description)
+        };
+
+        help_lines.push(line);
     }
 
     help_lines.push(String::new());
-    help_lines.push("  [Press any key to close]".to_string());
+    help_lines.push("Keyboard Shortcuts".to_string());
+    help_lines.push(String::new());
+    help_lines.push("  Tab         Switch pane focus".to_string());
+    help_lines.push("  Alt+1/2/3   Switch screen mode".to_string());
+    help_lines.push("  Esc         Clear input".to_string());
+    help_lines.push("  Enter       Send message / execute".to_string());
+    help_lines.push(String::new());
+    help_lines.push("[Press any key to close]".to_string());
 
     let help_text = help_lines.join("\n");
 
-    // Calculate overlay size
-    let width = 50.min(area.width.saturating_sub(4));
-    let height = 24.min(area.height.saturating_sub(4));
+    // Calculate overlay size - make it wider to fit content
+    let width = 60.min(area.width.saturating_sub(4));
+    let height = 28.min(area.height.saturating_sub(4));
     let overlay_area = centered_fixed(width, height, area);
 
     // Clear the area
@@ -907,15 +938,18 @@ pub fn render_autocomplete_popup(
     }
 
     // Calculate popup size and position
-    // Position above the input area (bottom of screen, accounting for footer)
+    // Position above the input area (which is at the bottom of the conversation pane)
     let max_items = 8.min(completions.len());
     // Safe: max_items is capped at 8, so it fits in u16
     #[allow(clippy::cast_possible_truncation)]
     let popup_height = (max_items as u16) + 2; // +2 for borders
     let popup_width = 45.min(area.width.saturating_sub(4));
 
-    // Position near bottom-left, above the footer hints (footer is 1 line)
-    let popup_y = area.height.saturating_sub(popup_height + 4); // 4 = footer + input height estimate
+    // Position just above the input area:
+    // - Footer: 1 line
+    // - Input area: ~3-4 lines
+    // Total offset from bottom: popup_height + 5
+    let popup_y = area.height.saturating_sub(popup_height + 5);
     let popup_x = 2; // Small left margin
 
     let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
@@ -1180,34 +1214,23 @@ mod tests {
     }
 
     #[test]
-    fn test_screen_mode_switching_with_ctrl() {
+    fn test_screen_mode_switching_with_alt() {
         let mut app = ShellApp::new();
         assert_eq!(app.screen_mode, ScreenMode::Split);
 
-        // Ctrl+1/2/3 switch modes (input-first model)
-        app.handle_key_event(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::CONTROL));
+        // Alt+1/2/3 switch modes (works cross-platform including Mac)
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::ALT));
         assert_eq!(app.screen_mode, ScreenMode::TimelineFocus);
 
-        app.handle_key_event(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::CONTROL));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::ALT));
         assert_eq!(app.screen_mode, ScreenMode::ContextFocus);
 
-        app.handle_key_event(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::CONTROL));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT));
         assert_eq!(app.screen_mode, ScreenMode::Split);
     }
 
     #[test]
-    fn test_escape_cascade_quit() {
-        // Input-first model: Esc does escape cascade (clear, then quit)
-        let mut app = ShellApp::new();
-        assert!(!app.should_quit);
-
-        // First Esc on empty input quits
-        app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert!(app.should_quit);
-    }
-
-    #[test]
-    fn test_escape_cascade_clear_then_quit() {
+    fn test_escape_clears_input() {
         let mut app = ShellApp::new();
         app.focused_pane = FocusedPane::Timeline;
 
@@ -1218,14 +1241,26 @@ mod tests {
         app.handle_key_event(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
         assert_eq!(app.input.content(), "test");
 
-        // First Esc clears input
+        // Esc clears input
         app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert!(app.input.is_empty());
+        assert!(!app.should_quit); // Does NOT quit
+    }
+
+    #[test]
+    fn test_escape_does_not_quit() {
+        // Esc never quits - must use /quit or /exit
+        let mut app = ShellApp::new();
         assert!(!app.should_quit);
 
-        // Second Esc quits
+        // Esc on empty input does NOT quit
         app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
-        assert!(app.should_quit);
+        assert!(!app.should_quit);
+
+        // Multiple Esc presses still don't quit
+        app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(!app.should_quit);
     }
 
     #[test]
