@@ -154,6 +154,10 @@ pub struct ShellApp {
     pub chat_loading: bool,
     /// Last model used (for error attribution).
     last_chat_model: Option<String>,
+
+    // --- Spec preview (M5-B.3c) ---
+    /// Scroll offset for spec preview pane.
+    pub spec_scroll: u16,
 }
 
 impl Default for ShellApp {
@@ -202,6 +206,8 @@ impl ShellApp {
             chat_rx: None,
             chat_loading: false,
             last_chat_model: None,
+            // Spec preview
+            spec_scroll: 0,
         }
     }
 
@@ -611,6 +617,16 @@ impl ShellApp {
         // Spec preview keybindings (when thread has draft)
         if let Some(thread) = &self.chat_thread {
             match key.code {
+                // j: scroll down
+                KeyCode::Char('j') if !has_ctrl_alt => {
+                    self.spec_scroll = self.spec_scroll.saturating_add(1);
+                    return None;
+                }
+                // k: scroll up
+                KeyCode::Char('k') if !has_ctrl_alt => {
+                    self.spec_scroll = self.spec_scroll.saturating_sub(1);
+                    return None;
+                }
                 // y: copy spec content to clipboard
                 KeyCode::Char('y') if !has_ctrl_alt => {
                     if thread.draft.is_empty() {
@@ -1440,6 +1456,7 @@ pub fn run_shell<B: Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
                     app.chat_loading,
                     app.last_chat_model.as_deref(),
                     app.chat_thread.as_ref().map(|t| t.draft.as_str()),
+                    app.spec_scroll,
                 );
 
                 // Render overlays on top

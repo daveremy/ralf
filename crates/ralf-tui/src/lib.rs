@@ -614,6 +614,7 @@ mod snapshot_tests {
                     false, // chat_loading
                     None,  // loading_model
                     None,  // spec_content
+                    0,     // spec_scroll
                 );
             })
             .expect("Failed to draw");

@@ -119,7 +119,8 @@ impl<'a> FooterHints<'a> {
                     ]
                 } else {
                     vec![
-                        KeyHint::new("y", "copy spec"),
+                        KeyHint::new("j/k", "scroll"),
+                        KeyHint::new("y", "copy"),
                         KeyHint::new("Tab", "focus"),
                     ]
                 }

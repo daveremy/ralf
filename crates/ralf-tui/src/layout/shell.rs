@@ -54,6 +54,7 @@ pub fn render_shell(
     chat_loading: bool,
     loading_model: Option<&str>,
     spec_content: Option<&str>,
+    spec_scroll: u16,
 ) {
     let area = frame.area();
 
@@ -97,6 +98,7 @@ pub fn render_shell(
         timeline_bounds,
         phase,
         spec_content,
+        spec_scroll,
     );
 
     // Full-width input bar (always visible)
@@ -167,6 +169,7 @@ fn render_main_area(
     timeline_bounds: &mut TimelinePaneBounds,
     phase: Option<ralf_engine::thread::PhaseKind>,
     spec_content: Option<&str>,
+    spec_scroll: u16,
 ) {
     match screen_mode {
         ScreenMode::Split => {
@@ -195,6 +198,7 @@ fn render_main_area(
                 show_models_panel,
                 phase,
                 spec_content,
+                spec_scroll,
             );
         }
         ScreenMode::TimelineFocus => {
@@ -221,6 +225,7 @@ fn render_main_area(
                 show_models_panel,
                 phase,
                 spec_content,
+                spec_scroll,
             );
         }
     }
@@ -259,6 +264,7 @@ fn render_context_pane(
     show_models_panel: bool,
     phase: Option<ralf_engine::thread::PhaseKind>,
     spec_content: Option<&str>,
+    spec_scroll: u16,
 ) {
     use ralf_engine::thread::PhaseKind;
 
@@ -280,7 +286,7 @@ fn render_context_pane(
         };
 
         // Render spec preview inside a bordered pane
-        render_spec_pane(frame, area, focused, theme, borders, spec_content.unwrap_or(""), spec_phase);
+        render_spec_pane(frame, area, focused, theme, borders, spec_content.unwrap_or(""), spec_phase, spec_scroll);
     } else {
         // Render placeholder for all other views (real implementations in M5-B.4)
         render_context_placeholder(frame, view, area, focused, theme, borders);
@@ -288,6 +294,7 @@ fn render_context_pane(
 }
 
 /// Render spec preview inside a bordered pane.
+#[allow(clippy::too_many_arguments)]
 fn render_spec_pane(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -296,6 +303,7 @@ fn render_spec_pane(
     borders: &BorderSet,
     content: &str,
     phase: SpecPhase,
+    scroll: u16,
 ) {
     let (border_set, border_color) = if focused {
         (borders.focused(), theme.border_focused)
@@ -312,7 +320,9 @@ fn render_spec_pane(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let preview = SpecPreview::new(content, phase, theme).focused(focused);
+    let preview = SpecPreview::new(content, phase, theme)
+        .focused(focused)
+        .scroll(scroll);
     frame.render_widget(preview, inner);
 }
 
