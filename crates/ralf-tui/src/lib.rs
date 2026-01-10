@@ -114,6 +114,10 @@ pub async fn run_tui(repo_path: &Path) -> Result<(), Box<dyn std::error::Error>>
 /// - Focus management and screen modes
 /// - Catppuccin theme and icon support
 pub fn run_shell_tui() -> Result<(), Box<dyn std::error::Error>> {
+    // Create tokio runtime for async chat operations
+    let rt = tokio::runtime::Runtime::new()?;
+    let _guard_rt = rt.enter(); // Keep runtime active for tokio::spawn
+
     // Setup terminal with RAII guard for cleanup
     enable_raw_mode()?;
     let _guard = TerminalGuard;
