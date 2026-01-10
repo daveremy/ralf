@@ -670,26 +670,6 @@ impl ShellApp {
             }
         }
 
-        // Global keybindings with Alt modifier (works better cross-platform)
-        if key.modifiers.contains(KeyModifiers::ALT) {
-            match key.code {
-                // Screen modes: Alt+1/2/3
-                KeyCode::Char('1') => {
-                    self.screen_mode = ScreenMode::Split;
-                    return None;
-                }
-                KeyCode::Char('2') => {
-                    self.screen_mode = ScreenMode::TimelineFocus;
-                    return None;
-                }
-                KeyCode::Char('3') => {
-                    self.screen_mode = ScreenMode::ContextFocus;
-                    return None;
-                }
-                _ => {}
-            }
-        }
-
         // Global keybindings with Ctrl modifier
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
@@ -889,7 +869,6 @@ fn render_help_overlay(area: Rect, buf: &mut Buffer, theme: &Theme) {
     help_lines.push("Keyboard Shortcuts".to_string());
     help_lines.push(String::new());
     help_lines.push("  Tab         Switch pane focus".to_string());
-    help_lines.push("  Alt+1/2/3   Switch screen mode".to_string());
     help_lines.push("  Esc         Clear input".to_string());
     help_lines.push("  Enter       Send message / execute".to_string());
     help_lines.push(String::new());
@@ -1211,22 +1190,6 @@ mod tests {
         // Tab should also be a no-op in ContextFocus mode
         app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
         assert_eq!(app.focused_pane, FocusedPane::Timeline);
-    }
-
-    #[test]
-    fn test_screen_mode_switching_with_alt() {
-        let mut app = ShellApp::new();
-        assert_eq!(app.screen_mode, ScreenMode::Split);
-
-        // Alt+1/2/3 switch modes (works cross-platform including Mac)
-        app.handle_key_event(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::ALT));
-        assert_eq!(app.screen_mode, ScreenMode::TimelineFocus);
-
-        app.handle_key_event(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::ALT));
-        assert_eq!(app.screen_mode, ScreenMode::ContextFocus);
-
-        app.handle_key_event(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT));
-        assert_eq!(app.screen_mode, ScreenMode::Split);
     }
 
     #[test]
