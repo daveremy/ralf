@@ -1295,8 +1295,15 @@ fn render_help_overlay(area: Rect, buf: &mut Buffer, theme: &Theme) {
     help_lines.push("Keyboard Shortcuts".to_string());
     help_lines.push(String::new());
     help_lines.push("  Tab         Switch pane focus".to_string());
+    help_lines.push("  j/k         Scroll (when focused on timeline/canvas)".to_string());
+    help_lines.push("  y           Copy selected event".to_string());
     help_lines.push("  Esc         Clear input".to_string());
     help_lines.push("  Enter       Send message / execute".to_string());
+    help_lines.push(String::new());
+    help_lines.push("Layout".to_string());
+    help_lines.push(String::new());
+    help_lines.push("  \\           Toggle canvas visibility".to_string());
+    help_lines.push("  { / }       Adjust split ratio".to_string());
     help_lines.push(String::new());
     help_lines.push("[Press any key to close]".to_string());
 
@@ -1304,7 +1311,7 @@ fn render_help_overlay(area: Rect, buf: &mut Buffer, theme: &Theme) {
 
     // Calculate overlay size - make it wider to fit content
     let width = 60.min(area.width.saturating_sub(4));
-    let height = 28.min(area.height.saturating_sub(4));
+    let height = 34.min(area.height.saturating_sub(4));
     let overlay_area = centered_fixed(width, height, area);
 
     // Clear the area
