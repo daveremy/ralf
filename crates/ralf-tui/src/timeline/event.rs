@@ -71,13 +71,13 @@ impl TimelineEvent {
     /// Returns:
     /// - `›` for user messages
     /// - `●` for coordinator AI (Spec, Run)
-    /// - `◦` for collaborator AI (Review)
+    /// - `○` for collaborator AI (Review)
     /// - `!` for system messages
     pub fn speaker_symbol(&self) -> &'static str {
         match &self.kind {
-            EventKind::Spec(e) if e.is_user => "\u{203a}", // ›
-            EventKind::Spec(_) | EventKind::Run(_) => "\u{25cf}", // ●
-            EventKind::Review(_) => "\u{25cb}",            // ◦
+            EventKind::Spec(e) if e.is_user => "›",
+            EventKind::Spec(_) | EventKind::Run(_) => "●",
+            EventKind::Review(_) => "○",
             EventKind::System(_) => "!",
         }
     }
@@ -137,8 +137,8 @@ impl TimelineEvent {
             }
             EventKind::Review(e) => {
                 let icon = match e.result {
-                    ReviewResult::Passed => "\u{2713}", // ✓
-                    ReviewResult::Failed => "\u{2717}", // ✗
+                    ReviewResult::Passed => "✓",
+                    ReviewResult::Failed => "✗",
                     ReviewResult::Skipped => "-",
                 };
                 format!("{} {}", icon, e.criterion)
@@ -497,7 +497,7 @@ mod tests {
             EventKind::Review(ReviewEvent::new("Tests pass", ReviewResult::Passed)),
         );
         assert_eq!(event.badge(), "REVIEW");
-        assert!(event.summary().contains('\u{2713}')); // ✓
+        assert!(event.summary().contains('✓'));
         assert!(event.summary().contains("Tests pass"));
     }
 
@@ -507,7 +507,7 @@ mod tests {
             5,
             EventKind::Review(ReviewEvent::new("Lint clean", ReviewResult::Failed)),
         );
-        assert!(event.summary().contains('\u{2717}')); // ✗
+        assert!(event.summary().contains('✗'));
     }
 
     #[test]

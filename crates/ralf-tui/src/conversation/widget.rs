@@ -166,7 +166,6 @@ impl<'a> ConversationPane<'a> {
 
             let mut lines: Vec<Line<'_>> = Vec::new();
             let mut current_line_spans: Vec<Span<'_>> = Vec::new();
-            let mut is_first_line = true;
             let mut cursor_drawn = false;
 
             // Add prompt to first line
@@ -186,15 +185,9 @@ impl<'a> ConversationPane<'a> {
                 }
 
                 if ch == '\n' {
-                    // End current line
+                    // End current line and start a new one with indentation
                     lines.push(Line::from(current_line_spans));
-                    current_line_spans = Vec::new();
-
-                    // Continuation lines get indentation
-                    if is_first_line {
-                        is_first_line = false;
-                    }
-                    current_line_spans.push(Span::raw(" ".repeat(prompt_len)));
+                    current_line_spans = vec![Span::raw(" ".repeat(prompt_len))];
                 } else {
                     current_line_spans.push(Span::styled(
                         ch.to_string(),

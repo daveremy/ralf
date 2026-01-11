@@ -165,23 +165,15 @@ impl<'a> TimelineWidget<'a> {
         let force_collapse = self.canvas_shows_spec && is_assistant_spec;
         let effectively_collapsed = event.collapsed || force_collapse;
 
-        // Collapse/expand indicator (ASCII: > and v)
-        let (collapsed_icon, expanded_icon) = if self.ascii_mode {
-            (">", "v")
-        } else {
-            ("\u{25b8}", "\u{25be}") // ▸ ▾
-        };
-
-        let collapse_indicator = if event.is_collapsible() {
-            if effectively_collapsed {
-                collapsed_icon
-            } else {
-                expanded_icon
+        // Collapse/expand indicator
+        let collapse_indicator = match (event.is_collapsible(), effectively_collapsed, selected) {
+            (true, true, _) | (false, _, true) => {
+                if self.ascii_mode { ">" } else { "▸" }
             }
-        } else if selected {
-            collapsed_icon
-        } else {
-            " "
+            (true, false, _) => {
+                if self.ascii_mode { "v" } else { "▾" }
+            }
+            (false, _, false) => " ",
         };
 
         // Speaker symbol and color
