@@ -516,8 +516,9 @@ Build the SpecPreview artifact view (right pane) and phase transitions.
 
 **Exit Criteria:** ✓ Right pane shows spec preview, markdown renders correctly, phase badge displays correctly. Spec copy (`y` key) works.
 
-##### M5-B.3c': Markdown Foundation
+##### M5-B.3c': Markdown Foundation ✓
 **Spec:** `SPEC-m5b3c-prime-markdown.md`
+**Status:** Complete (2026-01-10)
 
 Upgrade markdown rendering to use `pulldown-cmark` and add markdown support to timeline/conversation pane.
 
@@ -527,26 +528,37 @@ M5-B.3c introduced a simple line-by-line markdown parser for SpecPreview. Howeve
 Codex uses `pulldown-cmark` for robust markdown parsing. We should adopt the same approach and create a shared text rendering module.
 
 **Deliverables:**
-- Replace simple `context/markdown.rs` with `pulldown-cmark` based parser
-- Create shared `text/` module for markdown rendering
-- Add markdown rendering to ConversationPane for AI/assistant messages
-- Keep user messages as plain styled text (like Codex)
-- SpecPreview uses the new shared renderer
+- ✓ Replace simple `context/markdown.rs` with `pulldown-cmark` based parser
+- ✓ Create shared `text/` module for markdown rendering
+- ✓ Add markdown rendering to ConversationPane for AI/assistant messages
+- ✓ Keep user messages as plain styled text (like Codex)
+- ✓ SpecPreview uses the new shared renderer
+- ✓ Text wrapping with style preservation
+- ✓ Unicode/emoji support
 
-**Architecture:**
-```
-crates/ralf-tui/src/
-├── text/
-│   ├── mod.rs
-│   ├── markdown.rs      # pulldown-cmark based renderer
-│   └── styles.rs        # MarkdownStyles struct
-├── context/
-│   └── spec_preview.rs  # Uses text::markdown
-├── conversation/
-│   └── widget.rs        # Uses text::markdown for AI messages
-```
+**Exit Criteria:** ✓ AI messages in timeline render with markdown styling. SpecPreview continues to work. Single markdown implementation shared across components.
 
-**Exit Criteria:** AI messages in timeline render with markdown styling (headers bold, code highlighted, lists formatted). SpecPreview continues to work. Single markdown implementation shared across components.
+##### M5-B.3c'': Compact Timeline Format
+**Spec:** `SPEC-m5b3c-double-prime-compact-timeline.md`
+
+Redesign timeline event rendering to be more compact, inspired by Claude Code's conversation view.
+
+**Background:**
+Current timeline uses 2+ lines per message (badge line + content). Claude Code achieves a cleaner look with single-line starts and minimal labels. This wastes less vertical space and feels more like a natural conversation.
+
+**Deliverables:**
+- Compact single-line format: collapse indicator + speaker symbol + content start
+- Symbol-based speaker identification:
+  - `›` for user messages (no "user" label needed)
+  - `●` for coordinator AI (colored by model)
+  - `◦` for collaborator AI reviews (hollow, colored by model)
+  - `!` for system messages
+- Right-aligned model attribution on AI message first line
+- Remove separate badge line (`[SPEC] user` etc.)
+- Phase context lives in status bar, not per-message
+- Update snapshot tests
+
+**Exit Criteria:** Timeline looks like Claude Code - compact, content-focused, obvious who's speaking without verbose labels.
 
 ##### M5-B.3e: Workflow UX & Phase Guidance
 **Spec:** `WORKFLOW_UX.md`
@@ -710,7 +722,8 @@ M5-B (Conversation & Artifacts)
   │   ├── M5-B.3b (Chat Integration) ✓
   │   ├── M5-B.3c (Spec Artifact View) ✓
   │   ├── M5-B.3c' (Markdown Foundation) ✓
-  │   ├── M5-B.3e (Workflow UX & Phase Guidance) ← NEXT
+  │   ├── M5-B.3c'' (Compact Timeline Format) ← NEXT
+  │   ├── M5-B.3e (Workflow UX & Phase Guidance)
   │   ├── M5-B.3f (Model Role Assignment)
   │   └── M5-B.3d (Run Artifact Views)
   ├── M5-B.4 (Advanced Artifact Views)
@@ -730,7 +743,8 @@ Each major phase builds on the previous. No parallel development between major p
 - M5-B.3a'' → M5-B.3b: Chat integration needs stable focus/input model
 - M5-B.3b → M5-B.3c: Spec artifact needs chat to produce content
 - M5-B.3c → M5-B.3c': Markdown foundation improves UX and provides shared renderer
-- M5-B.3c' → M5-B.3e: Workflow UX adds phase guidance and /status command
+- M5-B.3c' → M5-B.3c'': Compact timeline format improves conversation UX
+- M5-B.3c'' → M5-B.3e: Workflow UX adds phase guidance and /status command
 - M5-B.3e → M5-B.3f: Model role assignment builds on workflow phase concepts
 - M5-B.3f → M5-B.3d: Run artifacts need model roles configured for implementation loop
 - M5-B.3 and M5-B.4 could potentially overlap once conversation layer is ready
