@@ -363,6 +363,21 @@ impl ShellApp {
         }
     }
 
+    /// Set focused pane, with auto-select for timeline.
+    ///
+    /// When focusing on timeline, automatically selects the last event
+    /// if nothing is currently selected.
+    fn set_focus(&mut self, pane: FocusedPane) {
+        self.focused_pane = pane;
+        // Auto-select last event when focusing timeline
+        if pane == FocusedPane::Timeline
+            && self.timeline.selected().is_none()
+            && !self.timeline.is_empty()
+        {
+            self.timeline.jump_to_end();
+        }
+    }
+
     /// Check if canvas should be shown (not collapsed and has content or manually visible).
     pub fn should_show_canvas(&self) -> bool {
         if self.canvas_collapsed {
@@ -384,7 +399,7 @@ impl ShellApp {
         self.canvas_collapsed = !self.canvas_collapsed;
         // If canvas is now hidden and context was focused, move focus to timeline
         if self.canvas_collapsed && self.focused_pane == FocusedPane::Context {
-            self.focused_pane = FocusedPane::Timeline;
+            self.set_focus(FocusedPane::Timeline);
         }
     }
 
@@ -1103,23 +1118,25 @@ impl ShellApp {
         // Tab - cycle focus (when autocomplete is not active)
         // Priority: autocomplete (handled above in conversation keys) > focus cycling
         if key.code == KeyCode::Tab && !self.should_show_autocomplete() {
-            self.focused_pane = self.focused_pane.cycle_for_mode(self.screen_mode);
+            let new_pane = self.focused_pane.cycle_for_mode(self.screen_mode);
+            self.set_focus(new_pane);
             return None;
         }
 
         // Shift+Tab - cycle focus backwards
         if key.code == KeyCode::BackTab {
-            self.focused_pane = self.focused_pane.cycle_prev();
+            let mut new_pane = self.focused_pane.cycle_prev();
             // Adjust for screen mode (skip hidden panes)
             match self.screen_mode {
-                ScreenMode::TimelineFocus if self.focused_pane == FocusedPane::Context => {
-                    self.focused_pane = FocusedPane::Input;
+                ScreenMode::TimelineFocus if new_pane == FocusedPane::Context => {
+                    new_pane = FocusedPane::Input;
                 }
-                ScreenMode::ContextFocus if self.focused_pane == FocusedPane::Timeline => {
-                    self.focused_pane = FocusedPane::Input;
+                ScreenMode::ContextFocus if new_pane == FocusedPane::Timeline => {
+                    new_pane = FocusedPane::Input;
                 }
                 _ => {}
             }
+            self.set_focus(new_pane);
             return None;
         }
 
@@ -1128,20 +1145,24 @@ impl ShellApp {
 
     /// Handle mouse input.
     pub fn handle_mouse_event(&mut self, mouse: MouseEvent) {
-        let bounds = &self.timeline_bounds;
+        // Copy bounds values to avoid borrow conflicts with set_focus
+        let bounds_inner_x = self.timeline_bounds.inner_x;
+        let bounds_inner_y = self.timeline_bounds.inner_y;
+        let bounds_inner_width = self.timeline_bounds.inner_width;
+        let bounds_inner_height = self.timeline_bounds.inner_height;
 
         // Check if click is within timeline pane bounds
-        let in_timeline = mouse.column >= bounds.inner_x
-            && mouse.column < bounds.inner_x + bounds.inner_width
-            && mouse.row >= bounds.inner_y
-            && mouse.row < bounds.inner_y + bounds.inner_height;
+        let in_timeline = mouse.column >= bounds_inner_x
+            && mouse.column < bounds_inner_x + bounds_inner_width
+            && mouse.row >= bounds_inner_y
+            && mouse.row < bounds_inner_y + bounds_inner_height;
 
         // Check if click is within context pane (in split mode)
         // Context pane starts after timeline ends and goes to the right edge
         let in_context = self.screen_mode == ScreenMode::Split
-            && mouse.column >= bounds.inner_x + bounds.inner_width
-            && mouse.row >= bounds.inner_y
-            && mouse.row < bounds.inner_y + bounds.inner_height;
+            && mouse.column >= bounds_inner_x + bounds_inner_width
+            && mouse.row >= bounds_inner_y
+            && mouse.row < bounds_inner_y + bounds_inner_height;
 
         match mouse.kind {
             MouseEventKind::ScrollUp => {
@@ -1160,9 +1181,9 @@ impl ShellApp {
                 // Click-to-focus: clicking on a pane focuses it
                 if self.screen_mode == ScreenMode::Split {
                     if in_timeline && self.focused_pane != FocusedPane::Timeline {
-                        self.focused_pane = FocusedPane::Timeline;
+                        self.set_focus(FocusedPane::Timeline);
                     } else if in_context && self.focused_pane != FocusedPane::Context {
-                        self.focused_pane = FocusedPane::Context;
+                        self.set_focus(FocusedPane::Context);
                     }
                 }
 
@@ -1178,7 +1199,7 @@ impl ShellApp {
                     });
 
                     // Convert to relative y coordinate within timeline inner area
-                    let relative_y = (mouse.row - bounds.inner_y) as usize;
+                    let relative_y = (mouse.row - bounds_inner_y) as usize;
 
                     if let Some(idx) = self.timeline.y_to_event_index(relative_y) {
                         self.timeline.select(idx);

@@ -148,7 +148,8 @@ impl<'a> TimelineWidget<'a> {
 
     /// Render a single event in compact format.
     ///
-    /// Format: `▸ › content...` or `▾ ● content...              claude`
+    /// Format: `▸ › content...` or `▾ ● content...`
+    /// Text wraps instead of truncating.
     #[allow(clippy::too_many_lines)]
     fn render_event(
         &self,
@@ -184,21 +185,19 @@ impl<'a> TimelineWidget<'a> {
         };
         let symbol_color = self.speaker_color(event);
 
-        // Model attribution (right-aligned, AI events only)
+        // Model attribution (shown as colored prefix for AI events)
         let attribution = event.model_attribution();
-        let attribution_width = attribution.as_ref().map_or(0, |a| a.len() + 2); // +2 for padding
 
-        // Calculate content width
-        // Layout: [collapse 1][space 1][symbol 1][space 1][content...][attribution]
-        let prefix_width = 4; // "▸ › " = 4 chars
-        let content_max_width = width.saturating_sub(prefix_width + attribution_width);
+        // Calculate content width (attribution prefix handled in render_first_line)
+        // Layout: [collapse 1][space 1][symbol 1][space 1][attr: ][content...]
+        let content_max_width = width.saturating_sub(4); // "▸ ● " = 4 chars base
 
         // Get summary for first line
         let summary = event.summary();
 
-        // Render first line: collapse + symbol + content + attribution
-        self.render_first_line(
-            y,
+        // Render first line(s) with wrapping: collapse + symbol + content + attribution
+        let lines_used = self.render_first_line_wrapped(
+            &mut y,
             area,
             buf,
             collapse_indicator,
@@ -208,15 +207,19 @@ impl<'a> TimelineWidget<'a> {
             content_max_width,
             attribution.as_deref(),
             selected,
+            effectively_collapsed,
         );
-        y += 1;
 
         if y >= area.y + area.height {
             return y - area.y;
         }
 
         // Render continuation lines if expanded
+        // (only if there are more lines beyond what we showed in the wrapped first line)
         if !effectively_collapsed && event.is_collapsible() {
+            // For wrapped display, we've already shown the first line(s) of content
+            // Now show remaining content lines
+            let _ = lines_used; // Used for tracking what we've shown
             let is_assistant_message = matches!(
                 &event.kind,
                 EventKind::Spec(spec) if !spec.is_user
@@ -293,11 +296,17 @@ impl<'a> TimelineWidget<'a> {
         y - area.y
     }
 
-    /// Render the first line of an event in compact format.
+    /// Render the first line(s) of an event with text wrapping.
+    ///
+    /// Format: `▸ ● claude: I'll help you...` (attribution as colored prefix)
+    /// When collapsed, shows up to 2 wrapped lines. When expanded, just shows the first line
+    /// (continuation handled separately).
+    ///
+    /// Returns the number of content lines rendered from the summary.
     #[allow(clippy::too_many_arguments)]
-    fn render_first_line(
+    fn render_first_line_wrapped(
         &self,
-        y: u16,
+        y: &mut u16,
         area: Rect,
         buf: &mut Buffer,
         collapse_indicator: &str,
@@ -307,50 +316,106 @@ impl<'a> TimelineWidget<'a> {
         content_max_width: usize,
         attribution: Option<&str>,
         selected: bool,
-    ) {
-        let width = area.width as usize;
+        collapsed: bool,
+    ) -> usize {
+        // Calculate prefix width for attribution
+        let (attr_prefix, attr_width) = if let Some(attr) = attribution {
+            let model_base = attr.split_whitespace().next().unwrap_or(attr);
+            (Some((attr.to_string(), self.model_color(model_base))), visual_width(attr) + 2)
+        } else {
+            (None, 0)
+        };
 
-        // Truncate summary to fit using unicode-safe truncation
-        let display_summary = truncate_to_width(summary, content_max_width);
+        // Available width for content on first line (after prefix)
+        // Layout: [collapse 1][space 1][symbol 1][space 1][attr: ][content...]
+        let first_line_content_width = content_max_width.saturating_sub(attr_width);
 
-        // Build spans
-        let mut spans = vec![
-            // Collapse indicator
-            Span::styled(
-                collapse_indicator,
-                Style::default().fg(if selected {
-                    self.theme.primary
-                } else {
-                    self.theme.muted
-                }),
-            ),
-            Span::raw(" "),
-            // Speaker symbol
-            Span::styled(speaker_symbol, Style::default().fg(symbol_color)),
-            Span::raw(" "),
-            // Content
-            Span::styled(display_summary.clone(), Style::default().fg(self.theme.text)),
-        ];
+        // Continuation line indent: "    " (4 spaces to align with content)
+        let continuation_indent = "    ";
+        let continuation_width = content_max_width;
 
-        // Add right-aligned attribution for AI events
-        if let Some(attr) = attribution {
-            // Calculate padding using visual width (not byte length)
-            let prefix_width = 4; // "▸ ● " = 4 visual cells
-            let content_visual_width = visual_width(&display_summary);
-            let attr_visual_width = visual_width(attr);
-            let used_width = prefix_width + content_visual_width;
-            let padding = width.saturating_sub(used_width + attr_visual_width + 1);
-            if padding > 0 {
-                spans.push(Span::raw(" ".repeat(padding)));
+        // Wrap the summary text
+        let wrapped_lines = wrap_text(summary, first_line_content_width);
+
+        // For collapsed events, show up to 2 lines; for expanded, just show first line here
+        let max_lines = if collapsed { 2 } else { 1 };
+        let lines_to_show = wrapped_lines.len().min(max_lines);
+
+        // Render first line with full prefix
+        if !wrapped_lines.is_empty() && *y < area.y + area.height {
+            let mut spans = vec![
+                // Collapse indicator
+                Span::styled(
+                    collapse_indicator,
+                    Style::default().fg(if selected {
+                        self.theme.primary
+                    } else {
+                        self.theme.muted
+                    }),
+                ),
+                Span::raw(" "),
+                // Speaker symbol
+                Span::styled(speaker_symbol, Style::default().fg(symbol_color)),
+                Span::raw(" "),
+            ];
+
+            // Add attribution prefix for AI events (colored by model)
+            if let Some((attr, attr_color)) = &attr_prefix {
+                spans.push(Span::styled(
+                    format!("{attr}: "),
+                    Style::default().fg(*attr_color),
+                ));
             }
+
+            // Add first line of content
             spans.push(Span::styled(
-                attr.to_string(),
-                Style::default().fg(self.theme.subtext),
+                wrapped_lines[0].clone(),
+                Style::default().fg(self.theme.text),
             ));
+
+            let line = Line::from(spans);
+            Paragraph::new(line).render(Rect::new(area.x, *y, area.width, 1), buf);
+            *y += 1;
         }
 
-        let line = Line::from(spans);
-        Paragraph::new(line).render(Rect::new(area.x, y, area.width, 1), buf);
+        // Render continuation lines (for collapsed with wrapped content)
+        for wrapped_line in wrapped_lines.iter().skip(1).take(lines_to_show - 1) {
+            if *y >= area.y + area.height {
+                break;
+            }
+
+            // Re-wrap for continuation width if needed
+            let display_line = if visual_width(wrapped_line) > continuation_width {
+                truncate_to_width(wrapped_line, continuation_width)
+            } else {
+                wrapped_line.clone()
+            };
+
+            let line = Line::from(vec![
+                Span::raw(continuation_indent),
+                Span::styled(display_line, Style::default().fg(self.theme.text)),
+            ]);
+            Paragraph::new(line).render(Rect::new(area.x, *y, area.width, 1), buf);
+            *y += 1;
+        }
+
+        // Show "[+N more]" if collapsed and there's more content
+        if collapsed && wrapped_lines.len() > max_lines {
+            let remaining = wrapped_lines.len() - max_lines;
+            if *y < area.y + area.height {
+                let line = Line::from(vec![
+                    Span::raw(continuation_indent),
+                    Span::styled(
+                        format!("[+{remaining} more lines]"),
+                        Style::default().fg(self.theme.muted),
+                    ),
+                ]);
+                Paragraph::new(line).render(Rect::new(area.x, *y, area.width, 1), buf);
+                *y += 1;
+            }
+        }
+
+        lines_to_show
     }
 
     /// Get the color for the speaker symbol.
