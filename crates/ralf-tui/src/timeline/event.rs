@@ -56,13 +56,54 @@ impl TimelineEvent {
         local.format("%H:%M").to_string()
     }
 
-    /// Get the badge text for this event.
+    /// Get the badge text for this event (legacy, for tests).
     pub fn badge(&self) -> &'static str {
         match &self.kind {
             EventKind::Spec(_) => "SPEC",
             EventKind::Run(_) => "RUN",
             EventKind::Review(_) => "REVIEW",
             EventKind::System(_) => "SYS",
+        }
+    }
+
+    /// Get the speaker symbol for compact display.
+    ///
+    /// Returns:
+    /// - `›` for user messages
+    /// - `●` for coordinator AI (Spec, Run)
+    /// - `○` for collaborator AI (Review)
+    /// - `!` for system messages
+    pub fn speaker_symbol(&self) -> &'static str {
+        match &self.kind {
+            EventKind::Spec(e) if e.is_user => "›",
+            EventKind::Spec(_) | EventKind::Run(_) => "●",
+            EventKind::Review(_) => "○",
+            EventKind::System(_) => "!",
+        }
+    }
+
+    /// Get the speaker symbol for ASCII mode.
+    pub fn speaker_symbol_ascii(&self) -> &'static str {
+        match &self.kind {
+            EventKind::Spec(e) if e.is_user => ">",
+            EventKind::Spec(_) | EventKind::Run(_) => "*",
+            EventKind::Review(_) => "o",
+            EventKind::System(_) => "!",
+        }
+    }
+
+    /// Check if this event is from the user.
+    pub fn is_user(&self) -> bool {
+        matches!(&self.kind, EventKind::Spec(e) if e.is_user)
+    }
+
+    /// Get the model name for attribution (AI events only).
+    pub fn model_attribution(&self) -> Option<String> {
+        match &self.kind {
+            EventKind::Spec(e) => e.model.clone(),
+            EventKind::Run(e) => Some(format!("{} #{}", e.model, e.iteration)),
+            EventKind::Review(e) => e.model.clone(),
+            EventKind::System(_) => None,
         }
     }
 
@@ -96,8 +137,8 @@ impl TimelineEvent {
             }
             EventKind::Review(e) => {
                 let icon = match e.result {
-                    ReviewResult::Passed => "\u{2713}", // ✓
-                    ReviewResult::Failed => "\u{2717}", // ✗
+                    ReviewResult::Passed => "✓",
+                    ReviewResult::Failed => "✗",
                     ReviewResult::Skipped => "-",
                 };
                 format!("{} {}", icon, e.criterion)
@@ -284,6 +325,8 @@ pub struct ReviewEvent {
     pub result: ReviewResult,
     /// Optional details.
     pub details: Option<String>,
+    /// Model that performed the review.
+    pub model: Option<String>,
 }
 
 impl ReviewEvent {
@@ -293,6 +336,21 @@ impl ReviewEvent {
             criterion: criterion.into(),
             result,
             details: None,
+            model: None,
+        }
+    }
+
+    /// Create a review event with model attribution.
+    pub fn with_model(
+        criterion: impl Into<String>,
+        result: ReviewResult,
+        model: impl Into<String>,
+    ) -> Self {
+        Self {
+            criterion: criterion.into(),
+            result,
+            details: None,
+            model: Some(model.into()),
         }
     }
 
@@ -306,6 +364,22 @@ impl ReviewEvent {
             criterion: criterion.into(),
             result,
             details: Some(details.into()),
+            model: None,
+        }
+    }
+
+    /// Create a review event with model and details.
+    pub fn with_model_and_details(
+        criterion: impl Into<String>,
+        result: ReviewResult,
+        model: impl Into<String>,
+        details: impl Into<String>,
+    ) -> Self {
+        Self {
+            criterion: criterion.into(),
+            result,
+            details: Some(details.into()),
+            model: Some(model.into()),
         }
     }
 }
@@ -423,7 +497,7 @@ mod tests {
             EventKind::Review(ReviewEvent::new("Tests pass", ReviewResult::Passed)),
         );
         assert_eq!(event.badge(), "REVIEW");
-        assert!(event.summary().contains('\u{2713}')); // ✓
+        assert!(event.summary().contains('✓'));
         assert!(event.summary().contains("Tests pass"));
     }
 
@@ -433,7 +507,7 @@ mod tests {
             5,
             EventKind::Review(ReviewEvent::new("Lint clean", ReviewResult::Failed)),
         );
-        assert!(event.summary().contains('\u{2717}')); // ✗
+        assert!(event.summary().contains('✗'));
     }
 
     #[test]

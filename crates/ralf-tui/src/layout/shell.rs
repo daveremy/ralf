@@ -201,6 +201,7 @@ fn render_main_area(
             timeline_bounds,
             false, // Canvas not visible
             tick,
+            ascii_mode,
         );
         return;
     }
@@ -227,6 +228,7 @@ fn render_main_area(
                 timeline_bounds,
                 canvas_shows_spec,
                 tick,
+                ascii_mode,
             );
             render_context_pane(
                 frame,
@@ -253,6 +255,7 @@ fn render_main_area(
                 timeline_bounds,
                 false, // Canvas not visible in focus mode
                 tick,
+                ascii_mode,
             );
         }
         ScreenMode::ContextFocus => {
@@ -285,6 +288,7 @@ fn render_timeline_pane(
     timeline_bounds: &mut TimelinePaneBounds,
     canvas_shows_spec: bool,
     tick: usize,
+    ascii_mode: bool,
 ) {
     // Calculate inner area (accounting for 1-pixel border on all sides)
     // This is used for mouse coordinate translation
@@ -296,7 +300,8 @@ fn render_timeline_pane(
     let widget = ConversationPane::from_timeline(timeline, theme)
         .focused(focused)
         .canvas_shows_spec(canvas_shows_spec)
-        .tick(tick);
+        .tick(tick)
+        .ascii_mode(ascii_mode);
     frame.render_widget(widget, area);
 }
 

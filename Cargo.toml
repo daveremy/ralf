@@ -32,6 +32,7 @@ crossterm = "0.28"
 arboard = "3.4"
 pulldown-cmark = "0.10"
 textwrap = "0.16"
+unicode-width = "0.2"
 
 # CLI dependencies
 clap = { version = "4.0", features = ["derive"] }
