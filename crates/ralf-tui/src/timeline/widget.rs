@@ -76,24 +76,6 @@ impl<'a> TimelineWidget<'a> {
         self
     }
 
-    /// Get the badge color for an event.
-    fn badge_color(&self, event: &TimelineEvent) -> ratatui::style::Color {
-        match &event.kind {
-            EventKind::Spec(_) => self.theme.primary,
-            EventKind::Run(e) => self.model_color(&e.model),
-            EventKind::Review(e) => match e.result {
-                ReviewResult::Passed => self.theme.success,
-                ReviewResult::Failed => self.theme.error,
-                ReviewResult::Skipped => self.theme.muted,
-            },
-            EventKind::System(e) => match e.level {
-                SystemLevel::Info => self.theme.info,
-                SystemLevel::Warning => self.theme.warning,
-                SystemLevel::Error => self.theme.error,
-            },
-        }
-    }
-
     /// Get the color for a model name.
     fn model_color(&self, model: &str) -> ratatui::style::Color {
         match model {
@@ -146,7 +128,9 @@ impl<'a> TimelineWidget<'a> {
         }
     }
 
-    /// Render a single event.
+    /// Render a single event in compact format.
+    ///
+    /// Format: `▸ › content...` or `▾ ● content...              claude`
     #[allow(clippy::too_many_lines)]
     fn render_event(
         &self,
@@ -158,121 +142,95 @@ impl<'a> TimelineWidget<'a> {
         let mut y = area.y;
         let width = area.width as usize;
 
-        // Selection indicator
-        let selection_prefix = if selected { "\u{25b8} " } else { "  " }; // ▸ or space
+        // Force collapse assistant spec events when canvas is showing spec
+        let is_assistant_spec = matches!(&event.kind, EventKind::Spec(spec) if !spec.is_user);
+        let force_collapse = self.canvas_shows_spec && is_assistant_spec;
+        let effectively_collapsed = event.collapsed || force_collapse;
 
-        // Line 1: badge + attribution (no timestamp)
-        let badge = event.badge();
-        let attribution = event.attribution();
-        let badge_color = self.badge_color(event);
+        // Collapse/expand indicator
+        let collapse_indicator = if event.is_collapsible() {
+            if effectively_collapsed {
+                "\u{25b8}" // ▸
+            } else {
+                "\u{25be}" // ▾
+            }
+        } else if selected {
+            "\u{25b8}" // ▸ for selection on non-collapsible
+        } else {
+            " "
+        };
 
-        let mut spans = vec![
-            Span::styled(
-                selection_prefix,
-                Style::default().fg(if selected {
-                    self.theme.primary
-                } else {
-                    self.theme.base
-                }),
-            ),
-            Span::styled("[", Style::default().fg(self.theme.muted)),
-            Span::styled(badge, Style::default().fg(badge_color)),
-            Span::styled("] ", Style::default().fg(self.theme.muted)),
-        ];
+        // Speaker symbol and color
+        let speaker_symbol = event.speaker_symbol();
+        let symbol_color = self.speaker_color(event);
 
-        if !attribution.is_empty() {
-            spans.push(Span::styled(
-                attribution,
-                Style::default().fg(self.theme.subtext),
-            ));
-        }
+        // Model attribution (right-aligned, AI events only)
+        let attribution = event.model_attribution();
+        let attribution_width = attribution.as_ref().map_or(0, |a| a.len() + 2); // +2 for padding
 
-        let line1 = Line::from(spans);
-        let para1 = Paragraph::new(line1);
-        para1.render(Rect::new(area.x, y, area.width, 1), buf);
+        // Calculate content width
+        // Layout: [collapse 1][space 1][symbol 1][space 1][content...][attribution]
+        let prefix_width = 4; // "▸ › " = 4 chars
+        let content_max_width = width.saturating_sub(prefix_width + attribution_width);
+
+        // Get summary for first line
+        let summary = event.summary();
+
+        // Render first line: collapse + symbol + content + attribution
+        self.render_first_line(
+            y,
+            area,
+            buf,
+            collapse_indicator,
+            speaker_symbol,
+            symbol_color,
+            &summary,
+            content_max_width,
+            attribution.as_deref(),
+            selected,
+        );
         y += 1;
 
         if y >= area.y + area.height {
             return y - area.y;
         }
 
-        // Line 2+: content
-        // Force collapse assistant spec events when canvas is showing spec
-        let is_assistant_spec = matches!(&event.kind, EventKind::Spec(spec) if !spec.is_user);
-        let force_collapse = self.canvas_shows_spec && is_assistant_spec;
-        let effectively_collapsed = event.collapsed || force_collapse;
-
-        let collapse_indicator = if event.is_collapsible() {
-            if effectively_collapsed {
-                "\u{25b8} " // ▸
-            } else {
-                "\u{25be} " // ▾
-            }
-        } else {
-            "  "
-        };
-
-        if effectively_collapsed || !event.is_collapsible() {
-            // Collapsed: wrap summary text instead of truncating
-            let summary = event.summary();
-            let content_width = width.saturating_sub(9); // Account for indent + prefix
-            let wrapped = wrap_text(&summary, content_width);
-
-            for (i, line_text) in wrapped.iter().enumerate() {
-                if y >= area.y + area.height {
-                    break;
-                }
-
-                let prefix = if i == 0 { collapse_indicator } else { "  " };
-                let line = Line::from(vec![
-                    Span::raw("       "), // Indent to align with content
-                    Span::styled(prefix, Style::default().fg(self.theme.muted)),
-                    Span::styled(line_text.clone(), Style::default().fg(self.theme.text)),
-                ]);
-                let para = Paragraph::new(line);
-                para.render(Rect::new(area.x, y, area.width, 1), buf);
-                y += 1;
-            }
-        } else {
-            // Expanded content - check if assistant message for markdown rendering
+        // Render continuation lines if expanded
+        if !effectively_collapsed && event.is_collapsible() {
             let is_assistant_message = matches!(
                 &event.kind,
                 EventKind::Spec(spec) if !spec.is_user
             );
 
-            // Calculate available width for content (accounting for indent + prefix)
-            let content_width = width.saturating_sub(9);
+            // Indent for continuation lines (4 spaces to align with content)
+            let indent = "    ";
+            let content_width = width.saturating_sub(indent.len());
 
             // Selected events show all content; non-selected are truncated
             let max_lines = if selected { usize::MAX } else { MAX_EXPANDED_LINES };
 
             if is_assistant_message {
-                // Render assistant messages with markdown styling
+                // Render with markdown
                 let content = event.copyable_content();
                 let md_lines = render_markdown(&content, content_width, self.theme);
-                // Wrap lines to fit available width
                 let wrapped_lines = wrap_lines(md_lines, content_width);
-                let total_lines = wrapped_lines.len();
+
+                // Skip first line (already rendered in summary)
+                let remaining: Vec<_> = wrapped_lines.into_iter().skip(1).collect();
+                let total_lines = remaining.len();
                 let display_lines = total_lines.min(max_lines);
                 let has_more = total_lines > max_lines;
 
-                for (i, md_line) in wrapped_lines.into_iter().take(display_lines).enumerate() {
+                for md_line in remaining.into_iter().take(display_lines) {
                     if y >= area.y + area.height {
                         break;
                     }
 
-                    let prefix = if i == 0 { collapse_indicator } else { "  " };
-
-                    // Prepend indentation and collapse indicator to the markdown line
-                    let mut final_spans = vec![
-                        Span::raw("       "),
-                        Span::styled(prefix, Style::default().fg(self.theme.muted)),
-                    ];
+                    let mut final_spans = vec![Span::raw(indent)];
                     final_spans.extend(md_line.spans);
 
                     let line = Line::from(final_spans);
-                    let para = Paragraph::new(line);
-                    para.render(Rect::new(area.x, y, area.width, 1), buf);
+                    Paragraph::new(line).render(Rect::new(area.x, y, area.width, 1), buf);
                     y += 1;
                 }
 
@@ -280,28 +238,27 @@ impl<'a> TimelineWidget<'a> {
                     self.render_truncation_indicator(&mut y, area, buf, total_lines - max_lines);
                 }
             } else {
-                // Plain text rendering for user/system messages
+                // Plain text for user/system messages
                 let content_lines = event.content_lines();
-                let wrapped_content: Vec<String> = content_lines
+                let wrapped: Vec<String> = content_lines
                     .iter()
                     .flat_map(|line| wrap_text(line, content_width))
                     .collect();
 
-                let total_lines = wrapped_content.len();
+                // Skip first line
+                let remaining: Vec<_> = wrapped.into_iter().skip(1).collect();
+                let total_lines = remaining.len();
                 let display_lines = total_lines.min(max_lines);
                 let has_more = total_lines > max_lines;
 
-                for (i, content_line) in wrapped_content.iter().take(display_lines).enumerate() {
+                for content_line in remaining.into_iter().take(display_lines) {
                     if y >= area.y + area.height {
                         break;
                     }
 
-                    let prefix = if i == 0 { collapse_indicator } else { "  " };
-
                     let line = Line::from(vec![
-                        Span::raw("       "),
-                        Span::styled(prefix, Style::default().fg(self.theme.muted)),
-                        Span::styled(content_line.clone(), Style::default().fg(self.theme.text)),
+                        Span::raw(indent),
+                        Span::styled(content_line, Style::default().fg(self.theme.text)),
                     ]);
                     Paragraph::new(line).render(Rect::new(area.x, y, area.width, 1), buf);
                     y += 1;
@@ -314,6 +271,92 @@ impl<'a> TimelineWidget<'a> {
         }
 
         y - area.y
+    }
+
+    /// Render the first line of an event in compact format.
+    #[allow(clippy::too_many_arguments)]
+    fn render_first_line(
+        &self,
+        y: u16,
+        area: Rect,
+        buf: &mut Buffer,
+        collapse_indicator: &str,
+        speaker_symbol: &str,
+        symbol_color: ratatui::style::Color,
+        summary: &str,
+        content_max_width: usize,
+        attribution: Option<&str>,
+        selected: bool,
+    ) {
+        let width = area.width as usize;
+
+        // Truncate summary to fit
+        let display_summary: String = if summary.len() > content_max_width {
+            format!("{}...", &summary[..content_max_width.saturating_sub(3)])
+        } else {
+            summary.to_string()
+        };
+
+        // Build spans
+        let mut spans = vec![
+            // Collapse indicator
+            Span::styled(
+                collapse_indicator,
+                Style::default().fg(if selected {
+                    self.theme.primary
+                } else {
+                    self.theme.muted
+                }),
+            ),
+            Span::raw(" "),
+            // Speaker symbol
+            Span::styled(speaker_symbol, Style::default().fg(symbol_color)),
+            Span::raw(" "),
+            // Content
+            Span::styled(display_summary.clone(), Style::default().fg(self.theme.text)),
+        ];
+
+        // Add right-aligned attribution for AI events
+        if let Some(attr) = attribution {
+            // Calculate padding needed
+            let used_width = 4 + display_summary.len(); // "▸ ● " + content
+            let padding = width.saturating_sub(used_width + attr.len() + 1);
+            if padding > 0 {
+                spans.push(Span::raw(" ".repeat(padding)));
+            }
+            spans.push(Span::styled(
+                attr.to_string(),
+                Style::default().fg(self.theme.subtext),
+            ));
+        }
+
+        let line = Line::from(spans);
+        Paragraph::new(line).render(Rect::new(area.x, y, area.width, 1), buf);
+    }
+
+    /// Get the color for the speaker symbol.
+    fn speaker_color(&self, event: &TimelineEvent) -> ratatui::style::Color {
+        match &event.kind {
+            EventKind::Spec(e) if e.is_user => self.theme.text,
+            EventKind::Spec(e) => {
+                if let Some(ref model) = e.model {
+                    self.model_color(model)
+                } else {
+                    self.theme.info
+                }
+            }
+            EventKind::Run(e) => self.model_color(&e.model),
+            EventKind::Review(e) => match e.result {
+                ReviewResult::Passed => self.theme.success,
+                ReviewResult::Failed => self.theme.error,
+                ReviewResult::Skipped => self.theme.muted,
+            },
+            EventKind::System(e) => match e.level {
+                SystemLevel::Info => self.theme.info,
+                SystemLevel::Warning => self.theme.warning,
+                SystemLevel::Error => self.theme.error,
+            },
+        }
     }
 }
 

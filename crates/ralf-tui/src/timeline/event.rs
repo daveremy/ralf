@@ -56,13 +56,53 @@ impl TimelineEvent {
         local.format("%H:%M").to_string()
     }
 
-    /// Get the badge text for this event.
+    /// Get the badge text for this event (legacy, for tests).
     pub fn badge(&self) -> &'static str {
         match &self.kind {
             EventKind::Spec(_) => "SPEC",
             EventKind::Run(_) => "RUN",
             EventKind::Review(_) => "REVIEW",
             EventKind::System(_) => "SYS",
+        }
+    }
+
+    /// Get the speaker symbol for compact display.
+    ///
+    /// Returns:
+    /// - `›` for user messages
+    /// - `●` for coordinator AI (Spec, Run)
+    /// - `◦` for collaborator AI (Review)
+    /// - `!` for system messages
+    pub fn speaker_symbol(&self) -> &'static str {
+        match &self.kind {
+            EventKind::Spec(e) if e.is_user => "\u{203a}", // ›
+            EventKind::Spec(_) | EventKind::Run(_) => "\u{25cf}", // ●
+            EventKind::Review(_) => "\u{25cb}",            // ◦
+            EventKind::System(_) => "!",
+        }
+    }
+
+    /// Get the speaker symbol for ASCII mode.
+    pub fn speaker_symbol_ascii(&self) -> &'static str {
+        match &self.kind {
+            EventKind::Spec(e) if e.is_user => ">",
+            EventKind::Spec(_) | EventKind::Run(_) => "*",
+            EventKind::Review(_) => "o",
+            EventKind::System(_) => "!",
+        }
+    }
+
+    /// Check if this event is from the user.
+    pub fn is_user(&self) -> bool {
+        matches!(&self.kind, EventKind::Spec(e) if e.is_user)
+    }
+
+    /// Get the model name for attribution (AI events only).
+    pub fn model_attribution(&self) -> Option<String> {
+        match &self.kind {
+            EventKind::Spec(e) => e.model.clone(),
+            EventKind::Run(e) => Some(format!("{} #{}", e.model, e.iteration)),
+            EventKind::Review(_) | EventKind::System(_) => None,
         }
     }
 
