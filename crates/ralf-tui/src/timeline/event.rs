@@ -102,7 +102,8 @@ impl TimelineEvent {
         match &self.kind {
             EventKind::Spec(e) => e.model.clone(),
             EventKind::Run(e) => Some(format!("{} #{}", e.model, e.iteration)),
-            EventKind::Review(_) | EventKind::System(_) => None,
+            EventKind::Review(e) => e.model.clone(),
+            EventKind::System(_) => None,
         }
     }
 
@@ -324,6 +325,8 @@ pub struct ReviewEvent {
     pub result: ReviewResult,
     /// Optional details.
     pub details: Option<String>,
+    /// Model that performed the review.
+    pub model: Option<String>,
 }
 
 impl ReviewEvent {
@@ -333,6 +336,21 @@ impl ReviewEvent {
             criterion: criterion.into(),
             result,
             details: None,
+            model: None,
+        }
+    }
+
+    /// Create a review event with model attribution.
+    pub fn with_model(
+        criterion: impl Into<String>,
+        result: ReviewResult,
+        model: impl Into<String>,
+    ) -> Self {
+        Self {
+            criterion: criterion.into(),
+            result,
+            details: None,
+            model: Some(model.into()),
         }
     }
 
@@ -346,6 +364,22 @@ impl ReviewEvent {
             criterion: criterion.into(),
             result,
             details: Some(details.into()),
+            model: None,
+        }
+    }
+
+    /// Create a review event with model and details.
+    pub fn with_model_and_details(
+        criterion: impl Into<String>,
+        result: ReviewResult,
+        model: impl Into<String>,
+        details: impl Into<String>,
+    ) -> Self {
+        Self {
+            criterion: criterion.into(),
+            result,
+            details: Some(details.into()),
+            model: Some(model.into()),
         }
     }
 }

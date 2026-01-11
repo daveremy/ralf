@@ -10,13 +10,17 @@ use ratatui::{
 
 use super::event::{EventKind, ReviewResult, SystemLevel, TimelineEvent, MAX_EXPANDED_LINES};
 use super::state::TimelineState;
-use crate::text::{render_markdown, wrap_lines, wrap_text};
+use crate::text::{render_markdown, truncate_to_width, visual_width, wrap_lines, wrap_text};
 use crate::theme::Theme;
 
-/// Spinner frames for pending indicator animation.
+/// Spinner frames for pending indicator animation (Unicode braille).
 const SPINNER: [&str; 8] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
 
+/// ASCII spinner frames for terminals without Unicode support.
+const SPINNER_ASCII: [&str; 4] = ["-", "\\", "|", "/"];
+
 /// Timeline pane widget.
+#[allow(clippy::struct_excessive_bools)]
 pub struct TimelineWidget<'a> {
     state: &'a TimelineState,
     theme: &'a Theme,
@@ -27,6 +31,8 @@ pub struct TimelineWidget<'a> {
     canvas_shows_spec: bool,
     /// Tick counter for animations.
     tick: usize,
+    /// Whether to use ASCII-only symbols.
+    ascii_mode: bool,
 }
 
 impl<'a> TimelineWidget<'a> {
@@ -39,6 +45,7 @@ impl<'a> TimelineWidget<'a> {
             with_border: true,
             canvas_shows_spec: false,
             tick: 0,
+            ascii_mode: false,
         }
     }
 
@@ -76,6 +83,13 @@ impl<'a> TimelineWidget<'a> {
         self
     }
 
+    /// Set whether to use ASCII-only symbols.
+    #[must_use]
+    pub fn ascii_mode(mut self, ascii: bool) -> Self {
+        self.ascii_mode = ascii;
+        self
+    }
+
     /// Get the color for a model name.
     fn model_color(&self, model: &str) -> ratatui::style::Color {
         match model {
@@ -93,7 +107,11 @@ impl<'a> TimelineWidget<'a> {
         }
 
         // Animate spinner at ~2 frames per tick (4Hz tick = 2Hz spinner)
-        let frame = SPINNER[(self.tick / 2) % SPINNER.len()];
+        let frame = if self.ascii_mode {
+            SPINNER_ASCII[(self.tick / 2) % SPINNER_ASCII.len()]
+        } else {
+            SPINNER[(self.tick / 2) % SPINNER.len()]
+        };
         let color = self.model_color(model);
 
         let line = Line::from(vec![
@@ -147,21 +165,31 @@ impl<'a> TimelineWidget<'a> {
         let force_collapse = self.canvas_shows_spec && is_assistant_spec;
         let effectively_collapsed = event.collapsed || force_collapse;
 
-        // Collapse/expand indicator
+        // Collapse/expand indicator (ASCII: > and v)
+        let (collapsed_icon, expanded_icon) = if self.ascii_mode {
+            (">", "v")
+        } else {
+            ("\u{25b8}", "\u{25be}") // ▸ ▾
+        };
+
         let collapse_indicator = if event.is_collapsible() {
             if effectively_collapsed {
-                "\u{25b8}" // ▸
+                collapsed_icon
             } else {
-                "\u{25be}" // ▾
+                expanded_icon
             }
         } else if selected {
-            "\u{25b8}" // ▸ for selection on non-collapsible
+            collapsed_icon
         } else {
             " "
         };
 
         // Speaker symbol and color
-        let speaker_symbol = event.speaker_symbol();
+        let speaker_symbol = if self.ascii_mode {
+            event.speaker_symbol_ascii()
+        } else {
+            event.speaker_symbol()
+        };
         let symbol_color = self.speaker_color(event);
 
         // Model attribution (right-aligned, AI events only)
@@ -290,12 +318,8 @@ impl<'a> TimelineWidget<'a> {
     ) {
         let width = area.width as usize;
 
-        // Truncate summary to fit
-        let display_summary: String = if summary.len() > content_max_width {
-            format!("{}...", &summary[..content_max_width.saturating_sub(3)])
-        } else {
-            summary.to_string()
-        };
+        // Truncate summary to fit using unicode-safe truncation
+        let display_summary = truncate_to_width(summary, content_max_width);
 
         // Build spans
         let mut spans = vec![
@@ -318,9 +342,12 @@ impl<'a> TimelineWidget<'a> {
 
         // Add right-aligned attribution for AI events
         if let Some(attr) = attribution {
-            // Calculate padding needed
-            let used_width = 4 + display_summary.len(); // "▸ ● " + content
-            let padding = width.saturating_sub(used_width + attr.len() + 1);
+            // Calculate padding using visual width (not byte length)
+            let prefix_width = 4; // "▸ ● " = 4 visual cells
+            let content_visual_width = visual_width(&display_summary);
+            let attr_visual_width = visual_width(attr);
+            let used_width = prefix_width + content_visual_width;
+            let padding = width.saturating_sub(used_width + attr_visual_width + 1);
             if padding > 0 {
                 spans.push(Span::raw(" ".repeat(padding)));
             }

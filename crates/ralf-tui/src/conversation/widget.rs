@@ -50,6 +50,8 @@ pub struct ConversationPane<'a> {
     canvas_shows_spec: bool,
     /// Tick counter for animations.
     tick: usize,
+    /// Whether to use ASCII-only symbols.
+    ascii_mode: bool,
 }
 
 impl<'a> ConversationPane<'a> {
@@ -67,6 +69,7 @@ impl<'a> ConversationPane<'a> {
             focused: false,
             canvas_shows_spec: false,
             tick: 0,
+            ascii_mode: false,
         }
     }
 
@@ -80,6 +83,7 @@ impl<'a> ConversationPane<'a> {
             focused: false,
             canvas_shows_spec: false,
             tick: 0,
+            ascii_mode: false,
         }
     }
 
@@ -110,6 +114,13 @@ impl<'a> ConversationPane<'a> {
     #[must_use]
     pub fn tick(mut self, tick: usize) -> Self {
         self.tick = tick;
+        self
+    }
+
+    /// Set whether to use ASCII-only symbols.
+    #[must_use]
+    pub fn ascii_mode(mut self, ascii: bool) -> Self {
+        self.ascii_mode = ascii;
         self
     }
 
@@ -259,7 +270,8 @@ impl Widget for ConversationPane<'_> {
                 .with_border(false)
                 .focused(self.focused)
                 .canvas_shows_spec(self.canvas_shows_spec)
-                .tick(self.tick);
+                .tick(self.tick)
+                .ascii_mode(self.ascii_mode);
             timeline_widget.render(inner, buf);
             return;
         }
@@ -287,7 +299,8 @@ impl Widget for ConversationPane<'_> {
             .with_border(false)
             .focused(self.focused)
             .canvas_shows_spec(self.canvas_shows_spec)
-            .tick(self.tick);
+            .tick(self.tick)
+            .ascii_mode(self.ascii_mode);
         timeline_widget.render(timeline_area, buf);
 
         // Render divider
