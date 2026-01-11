@@ -173,6 +173,10 @@ pub struct ShellApp {
     /// Whether a resize drag is in progress.
     #[allow(dead_code)] // For future mouse drag feature
     resize_dragging: bool,
+
+    // --- Animations ---
+    /// Tick counter for animations (incremented at 4Hz).
+    pub tick: usize,
 }
 
 impl Default for ShellApp {
@@ -230,6 +234,8 @@ impl ShellApp {
             split_ratio: 40, // 40% timeline, 60% canvas
             canvas_collapsed: false,
             resize_dragging: false,
+            // Animations
+            tick: 0,
         }
     }
 
@@ -728,6 +734,9 @@ impl ShellApp {
         self.last_chat_model = Some(model_config.name.clone());
         self.chat_loading = true;
 
+        // Show pending indicator in timeline
+        self.timeline.set_pending(&model_config.name);
+
         // Spawn async chat
         let (tx, rx) = tokio_mpsc::unbounded_channel();
         self.chat_rx = Some(rx);
@@ -756,6 +765,7 @@ impl ShellApp {
         match rx.try_recv() {
             Ok(Ok(result)) => {
                 self.chat_loading = false;
+                self.timeline.clear_pending();
 
                 // Add AI response to timeline
                 self.timeline.push(EventKind::Spec(SpecEvent::assistant(
@@ -791,6 +801,7 @@ impl ShellApp {
             }
             Ok(Err(e)) => {
                 self.chat_loading = false;
+                self.timeline.clear_pending();
 
                 // Add error to timeline
                 self.timeline
@@ -806,6 +817,7 @@ impl ShellApp {
                 // Channel closed unexpectedly
                 self.chat_rx = None;
                 self.chat_loading = false;
+                self.timeline.clear_pending();
             }
         }
     }
@@ -1489,6 +1501,9 @@ pub fn run_shell<B: Backend>(
             // Clear expired toasts
             app.clear_expired_toast();
 
+            // Increment tick for animations (wraps around)
+            app.tick = app.tick.wrapping_add(1);
+
             // Pre-compute values that need immutable access before mutable borrow
             let show_canvas = app.should_show_canvas();
             let split_ratio = app.split_ratio;
@@ -1516,6 +1531,7 @@ pub fn run_shell<B: Backend>(
                     app.keyboard_enhanced,
                     split_ratio,
                     show_canvas,
+                    app.tick,
                 );
 
                 // Render overlays on top

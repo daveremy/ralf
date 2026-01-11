@@ -20,6 +20,8 @@ pub struct TimelineState {
     follow: bool,
     /// Next event ID to assign.
     next_id: u64,
+    /// Model name we're waiting for a response from (shows animated indicator).
+    pending_response: Option<String>,
 }
 
 impl TimelineState {
@@ -31,6 +33,7 @@ impl TimelineState {
             scroll_offset: 0,
             follow: true, // Start with follow enabled
             next_id: 1,
+            pending_response: None,
         }
     }
 
@@ -57,6 +60,21 @@ impl TimelineState {
     /// Check if the timeline is empty.
     pub fn is_empty(&self) -> bool {
         self.events.is_empty()
+    }
+
+    /// Get the pending response model name (if waiting for a response).
+    pub fn pending_response(&self) -> Option<&str> {
+        self.pending_response.as_deref()
+    }
+
+    /// Set pending response state (shows animated indicator while waiting).
+    pub fn set_pending(&mut self, model: impl Into<String>) {
+        self.pending_response = Some(model.into());
+    }
+
+    /// Clear pending response state.
+    pub fn clear_pending(&mut self) {
+        self.pending_response = None;
     }
 
     /// Get the number of events.

@@ -58,6 +58,7 @@ pub fn render_shell(
     keyboard_enhanced: bool,
     split_ratio: u16,
     show_canvas: bool,
+    tick: usize,
 ) {
     let area = frame.area();
 
@@ -110,6 +111,7 @@ pub fn render_shell(
         spec_scroll,
         split_ratio,
         show_canvas,
+        tick,
     );
 
     // Full-width input bar (always visible)
@@ -183,6 +185,7 @@ fn render_main_area(
     spec_scroll: u16,
     split_ratio: u16,
     show_canvas: bool,
+    tick: usize,
 ) {
     // Determine if canvas is showing spec (used to auto-collapse spec events in timeline)
     let canvas_shows_spec = show_canvas && spec_content.is_some();
@@ -197,6 +200,7 @@ fn render_main_area(
             timeline,
             timeline_bounds,
             false, // Canvas not visible
+            tick,
         );
         return;
     }
@@ -222,6 +226,7 @@ fn render_main_area(
                 timeline,
                 timeline_bounds,
                 canvas_shows_spec,
+                tick,
             );
             render_context_pane(
                 frame,
@@ -247,6 +252,7 @@ fn render_main_area(
                 timeline,
                 timeline_bounds,
                 false, // Canvas not visible in focus mode
+                tick,
             );
         }
         ScreenMode::ContextFocus => {
@@ -269,6 +275,7 @@ fn render_main_area(
 }
 
 /// Render the timeline pane (events only, input is rendered separately).
+#[allow(clippy::too_many_arguments)]
 fn render_timeline_pane(
     frame: &mut Frame<'_>,
     area: Rect,
@@ -277,6 +284,7 @@ fn render_timeline_pane(
     timeline: &TimelineState,
     timeline_bounds: &mut TimelinePaneBounds,
     canvas_shows_spec: bool,
+    tick: usize,
 ) {
     // Calculate inner area (accounting for 1-pixel border on all sides)
     // This is used for mouse coordinate translation
@@ -287,7 +295,8 @@ fn render_timeline_pane(
 
     let widget = ConversationPane::from_timeline(timeline, theme)
         .focused(focused)
-        .canvas_shows_spec(canvas_shows_spec);
+        .canvas_shows_spec(canvas_shows_spec)
+        .tick(tick);
     frame.render_widget(widget, area);
 }
 

@@ -48,6 +48,8 @@ pub struct ConversationPane<'a> {
     focused: bool,
     /// Whether the canvas is showing spec content.
     canvas_shows_spec: bool,
+    /// Tick counter for animations.
+    tick: usize,
 }
 
 impl<'a> ConversationPane<'a> {
@@ -64,6 +66,7 @@ impl<'a> ConversationPane<'a> {
             theme,
             focused: false,
             canvas_shows_spec: false,
+            tick: 0,
         }
     }
 
@@ -76,6 +79,7 @@ impl<'a> ConversationPane<'a> {
             theme,
             focused: false,
             canvas_shows_spec: false,
+            tick: 0,
         }
     }
 
@@ -99,6 +103,13 @@ impl<'a> ConversationPane<'a> {
     #[must_use]
     pub fn canvas_shows_spec(mut self, shows_spec: bool) -> Self {
         self.canvas_shows_spec = shows_spec;
+        self
+    }
+
+    /// Set the tick counter for animations.
+    #[must_use]
+    pub fn tick(mut self, tick: usize) -> Self {
+        self.tick = tick;
         self
     }
 
@@ -247,7 +258,8 @@ impl Widget for ConversationPane<'_> {
             let timeline_widget = TimelineWidget::new(self.timeline, self.theme)
                 .with_border(false)
                 .focused(self.focused)
-                .canvas_shows_spec(self.canvas_shows_spec);
+                .canvas_shows_spec(self.canvas_shows_spec)
+                .tick(self.tick);
             timeline_widget.render(inner, buf);
             return;
         }
@@ -274,7 +286,8 @@ impl Widget for ConversationPane<'_> {
         let timeline_widget = TimelineWidget::new(self.timeline, self.theme)
             .with_border(false)
             .focused(self.focused)
-            .canvas_shows_spec(self.canvas_shows_spec);
+            .canvas_shows_spec(self.canvas_shows_spec)
+            .tick(self.tick);
         timeline_widget.render(timeline_area, buf);
 
         // Render divider

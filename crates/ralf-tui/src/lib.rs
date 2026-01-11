@@ -642,6 +642,7 @@ mod snapshot_tests {
                     false, // keyboard_enhanced
                     40,    // split_ratio
                     true,  // show_canvas
+                    0,     // tick
                 );
             })
             .expect("Failed to draw");

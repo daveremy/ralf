@@ -13,6 +13,9 @@ use super::state::TimelineState;
 use crate::text::{render_markdown, wrap_lines, wrap_text};
 use crate::theme::Theme;
 
+/// Spinner frames for pending indicator animation.
+const SPINNER: [&str; 8] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"];
+
 /// Timeline pane widget.
 pub struct TimelineWidget<'a> {
     state: &'a TimelineState,
@@ -22,6 +25,8 @@ pub struct TimelineWidget<'a> {
     with_border: bool,
     /// Whether the canvas is showing spec content (auto-collapse assistant spec events).
     canvas_shows_spec: bool,
+    /// Tick counter for animations.
+    tick: usize,
 }
 
 impl<'a> TimelineWidget<'a> {
@@ -33,6 +38,7 @@ impl<'a> TimelineWidget<'a> {
             focused: false,
             with_border: true,
             canvas_shows_spec: false,
+            tick: 0,
         }
     }
 
@@ -63,6 +69,13 @@ impl<'a> TimelineWidget<'a> {
         self
     }
 
+    /// Set the tick counter for animations.
+    #[must_use]
+    pub fn tick(mut self, tick: usize) -> Self {
+        self.tick = tick;
+        self
+    }
+
     /// Get the badge color for an event.
     fn badge_color(&self, event: &TimelineEvent) -> ratatui::style::Color {
         match &event.kind {
@@ -89,6 +102,27 @@ impl<'a> TimelineWidget<'a> {
             "codex" => self.theme.codex,
             _ => self.theme.info,
         }
+    }
+
+    /// Render the pending response indicator with animated spinner.
+    fn render_pending_indicator(&self, model: &str, y: u16, area: Rect, buf: &mut Buffer) {
+        if y >= area.y + area.height {
+            return;
+        }
+
+        // Animate spinner at ~2 frames per tick (4Hz tick = 2Hz spinner)
+        let frame = SPINNER[(self.tick / 2) % SPINNER.len()];
+        let color = self.model_color(model);
+
+        let line = Line::from(vec![
+            Span::raw("  "),
+            Span::styled(frame, Style::default().fg(color)),
+            Span::raw(" "),
+            Span::styled(model, Style::default().fg(self.theme.subtext)),
+            Span::styled(" is thinking...", Style::default().fg(self.theme.muted)),
+        ]);
+
+        Paragraph::new(line).render(Rect::new(area.x, y, area.width, 1), buf);
     }
 
     /// Render a "[+N more]" truncation indicator.
@@ -313,17 +347,22 @@ impl Widget for TimelineWidget<'_> {
             return;
         }
 
-        // Empty state
+        // Empty state (but may still have pending)
         if self.state.is_empty() {
-            let empty_msg = Line::from(vec![Span::styled(
-                "No events yet",
-                Style::default().fg(self.theme.muted),
-            )]);
-            let para = Paragraph::new(empty_msg);
-            para.render(
-                Rect::new(inner.x + 2, inner.y + inner.height / 2, inner.width - 4, 1),
-                buf,
-            );
+            // Show pending indicator even when timeline is empty
+            if let Some(model) = self.state.pending_response() {
+                self.render_pending_indicator(model, inner.y, inner, buf);
+            } else {
+                let empty_msg = Line::from(vec![Span::styled(
+                    "No events yet",
+                    Style::default().fg(self.theme.muted),
+                )]);
+                let para = Paragraph::new(empty_msg);
+                para.render(
+                    Rect::new(inner.x + 2, inner.y + inner.height / 2, inner.width - 4, 1),
+                    buf,
+                );
+            }
             return;
         }
 
@@ -349,6 +388,11 @@ impl Widget for TimelineWidget<'_> {
             if y < inner.y + inner.height {
                 y += 1;
             }
+        }
+
+        // Render pending indicator if waiting for a response
+        if let Some(model) = self.state.pending_response() {
+            self.render_pending_indicator(model, y, inner, buf);
         }
     }
 }
