@@ -570,6 +570,33 @@ Users need to understand where they are in the workflow and how to progress. Thi
 
 **Exit Criteria:** User can see where they are in workflow, knows what command to use next, `/status` shows visual workflow diagram.
 
+##### M5-B.3f: Model Role Assignment
+**Spec:** `WORKFLOW_UX.md` (Model Role Assignment section)
+
+Redesign the Models panel to support per-phase coordinator/collaborator assignment.
+
+**Background:**
+The Coordinator + Collaborator model requires users to configure which models serve which roles. Different phases (Spec, Implementation, Finalization) may want different coordinators and collaborators.
+
+**Deliverables:**
+- Models panel redesign:
+  - Status section (existing model status indicators)
+  - Role Configuration section showing per-phase assignments
+  - j/k navigation, Enter to configure
+  - Mouse click support
+- Per-phase configuration:
+  - Coordinator (single model dropdown)
+  - Collaborators (multi-select checkboxes)
+  - Three major phases: Spec, Implementation, Finalization
+- Dynamic switching:
+  - `/model <name>` command for temporary coordinator override
+  - Status bar indicator when overridden (asterisk)
+  - Session-only, not persisted
+- Configuration persistence to `~/.ralf/config.toml`
+- System prompts for each role (engine integration)
+
+**Exit Criteria:** Can configure coordinator/collaborator for each major phase from Models panel. Can temporarily switch models with `/model` command. Configuration persists across sessions.
+
 ##### M5-B.3d: Run Artifact Views
 **Spec:** `SPEC-m5b3d-run-artifacts.md`
 
@@ -682,8 +709,9 @@ M5-B (Conversation & Artifacts)
   │   ├── M5-B.3a'' (Focus Model & Layout Rework) ✓
   │   ├── M5-B.3b (Chat Integration) ✓
   │   ├── M5-B.3c (Spec Artifact View) ✓
-  │   ├── M5-B.3c' (Markdown Foundation) ← NEXT
-  │   ├── M5-B.3e (Workflow UX & Phase Guidance)
+  │   ├── M5-B.3c' (Markdown Foundation) ✓
+  │   ├── M5-B.3e (Workflow UX & Phase Guidance) ← NEXT
+  │   ├── M5-B.3f (Model Role Assignment)
   │   └── M5-B.3d (Run Artifact Views)
   ├── M5-B.4 (Advanced Artifact Views)
   └── M5-B.5 (Thread Management)
@@ -703,7 +731,8 @@ Each major phase builds on the previous. No parallel development between major p
 - M5-B.3b → M5-B.3c: Spec artifact needs chat to produce content
 - M5-B.3c → M5-B.3c': Markdown foundation improves UX and provides shared renderer
 - M5-B.3c' → M5-B.3e: Workflow UX adds phase guidance and /status command
-- M5-B.3e → M5-B.3d: Run artifacts need phase transitions working
+- M5-B.3e → M5-B.3f: Model role assignment builds on workflow phase concepts
+- M5-B.3f → M5-B.3d: Run artifacts need model roles configured for implementation loop
 - M5-B.3 and M5-B.4 could potentially overlap once conversation layer is ready
 - M5-B.4 → M5-B.5: Thread management needs all views in place
 - M5-B.5 could start earlier for CLI-only features (ralf threads)
@@ -861,3 +890,5 @@ crates/ralf-tui/src/
 | 2026-01-09 | Completed M5-B.3a'' (Focus Model & Layout Rework): three-way focus, full-width input, pane-specific keybindings, toast notifications. Added mouse text selection to M5-C polish items. |
 | 2026-01-10 | Completed M5-B.3b (Chat Integration): async AI invocation, user/AI messages in timeline, model status updates, panic hook for terminal restoration, integration tests and testing documentation. |
 | 2026-01-10 | Added M5-B.3e (Workflow UX & Phase Guidance): phase-aware hints, /status command, Coordinator/Collaborator model. Created WORKFLOW_UX.md documenting the user experience flow. |
+| 2026-01-10 | Completed M5-B.3c' (Markdown Foundation): pulldown-cmark renderer, markdown in timeline, text wrapping, unicode support. |
+| 2026-01-10 | Added M5-B.3f (Model Role Assignment): per-phase coordinator/collaborator config, Models panel redesign, dynamic switching. Updated WORKFLOW_UX.md with model role assignment design. |

@@ -318,12 +318,108 @@ Footer hints change based on phase to show the most relevant next actions.
 
 ---
 
+## Model Role Assignment
+
+### Per-Phase Configuration
+
+Each **major phase** has its own coordinator + collaborator configuration:
+
+| Major Phase | Coordinator Does | Collaborators Do |
+|-------------|------------------|------------------|
+| **Spec** | Conversation, draft spec | Review spec for completeness |
+| **Implementation** | Write code, iterate | Review implementation |
+| **Finalization** | Polish, commit prep | Final review |
+
+### Models Panel Design
+
+The Models panel (Context pane when no thread) shows both status and role assignment:
+
+```
+┌─ Models ─────────────────────────────────────────────────┐
+│ Status                                                    │
+│   ● claude  ready                                         │
+│   ● gemini  ready                                         │
+│   ○ codex   rate limited (2m)                             │
+│                                                           │
+│ Role Configuration                         j/k Enter      │
+│ ┌───────────────────────────────────────────────────────┐ │
+│ │ ▸ Spec           claude      + gemini                 │ │
+│ │   Implementation codex       + claude, gemini         │ │
+│ │   Finalization   claude      + gemini, codex          │ │
+│ └───────────────────────────────────────────────────────┘ │
+│                                                           │
+│ Coordinator: Runs the conversation                        │
+│ Collaborators: Provide reviews/feedback                   │
+└───────────────────────────────────────────────────────────┘
+```
+
+**Interaction:**
+- `j/k` to select phase row
+- `Enter` to open configuration for that phase
+- Configuration shows:
+  - Coordinator dropdown (single model)
+  - Collaborator checkboxes (multi-select)
+  - Only shows "ready" models as selectable
+- Click support for mouse users
+
+### Dynamic Switching
+
+Users may want to temporarily change the coordinator without updating config:
+
+**Options:**
+- `/model <name>` - Switch coordinator for current major phase (session only)
+- `Ctrl+M` - Cycle through ready models for current phase
+- Status bar shows current model, indicates if overridden
+
+**Status bar with override:**
+```
+● Drafting │ "My Feature" │ gemini* ●     → /accept when ready
+                           ↑ asterisk indicates temporary override
+```
+
+### Persistence
+
+- Role configuration saved to `~/.ralf/config.toml` or `.ralf/config.json`
+- Dynamic overrides are session-only (not persisted)
+- Default: claude as coordinator, all others as collaborators
+
+### System Prompts
+
+Each role needs appropriate system prompts:
+
+**Coordinator (Spec Phase):**
+- Help user articulate requirements
+- Ask clarifying questions
+- Structure spec with Promise, Deliverables, Acceptance Criteria
+- Guide through iterations
+
+**Collaborator (Spec Review):**
+- Review spec for completeness and correctness
+- Check testability of acceptance criteria
+- Identify missing edge cases
+- Provide PASSED/FAILED verdict with specific issues
+
+**Coordinator (Implementation Phase):**
+- Execute code changes according to spec
+- Track progress against acceptance criteria
+- Report status and issues
+
+**Collaborator (Code Review):**
+- Review implementation against spec
+- Check code quality, safety, test coverage
+- Provide PASSED/FAILED verdict
+
+---
+
 ## Open Questions
 
 1. **How many collaborators?** Should assessment always use all available models, or should user configure which to use?
+   - **Answer:** User configures per-phase in Models panel.
 
 2. **Assessment timeout?** What if a collaborator doesn't respond? Proceed without their feedback?
 
 3. **Review persistence?** Should review feedback be saved with the thread for later reference?
 
 4. **Quick mode integration?** In quick mode, should `/accept` auto-approve if reviews pass?
+
+5. **Model variant selection?** Should users configure variants (opus/sonnet/haiku) per role, or use CLI defaults?
